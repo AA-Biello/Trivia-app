@@ -3,10 +3,9 @@
 Apply `supabase/migrations/20261008120000_initial_schema.sql`, then run
 `anon_access_verification.sql` in the Supabase SQL editor.
 
-The script seeds disposable rows inside a transaction, switches to the `anon`
-role, and asserts that secret tables are unreadable and that integrity rules
-(duplicate answers, post-close submits, per-question publish) hold. It rolls
-back at the end.
+The script is a single `DO` block: seeded IDs live in PL/pgSQL variables (no
+cross-statement temp table / CTE). It switches to `anon` for access checks,
+runs integrity cases, then deletes seeded rows (including on failure).
 
 Also spot-check with the publishable key against PostgREST:
 
