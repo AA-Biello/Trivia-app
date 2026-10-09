@@ -7,6 +7,7 @@ export function playChannelName(gameId: string): string {
 
 export const GAME_STATE_EVENT = "game_state";
 export const ANSWER_PROGRESS_EVENT = "answer_progress";
+export const WAGER_PROGRESS_EVENT = "wager_progress";
 
 export type PublicRevealView = {
   questionId: string;
@@ -31,9 +32,19 @@ export type PublicScoreboardRow = {
   rank: number;
 };
 
+export type PublicFinalResultsRow = {
+  teamName: string;
+  startingScore: number;
+  wager: number;
+  answerText: string | null;
+  isCorrect: boolean;
+  finalScore: number;
+  rank: number;
+};
+
 /**
  * Public snapshot safe for team clients.
- * Never includes unrevealed secrets/grades. Scoreboard only after publish.
+ * Never includes unrevealed secrets/grades/wagers. Scoreboard only after publish.
  */
 export type PublicGameStatePayload = {
   status: GameStatus;
@@ -43,14 +54,26 @@ export type PublicGameStatePayload = {
   questionNumber: number | null;
   questionCount: number | null;
   prompt: string | null;
+  /** Present during wager phases; never includes other teams' amounts. */
+  maxWager: number | null;
   reveal: PublicRevealView | null;
   scoreboard: PublicScoreboardRow[] | null;
+  /** Only after host publishes FINAL_RESULTS. */
+  finalResults: PublicFinalResultsRow[] | null;
 };
 
 /** Host progress ping — team identity only, never answer text. */
 export type AnswerProgressPayload = {
   questionId: string;
   submittedCount: number;
+  teamId: string;
+  teamName: string;
+};
+
+/** Host progress ping — team identity only, never wager amounts. */
+export type WagerProgressPayload = {
+  questionId: string;
+  wageredCount: number;
   teamId: string;
   teamName: string;
 };

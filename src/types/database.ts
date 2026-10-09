@@ -180,6 +180,7 @@ export type Database = {
           title: string;
           kind: RoundKind;
           planned_question_count: number;
+          max_wager: number | null;
           created_at: IsoTimestamptz;
         };
         Insert: {
@@ -189,6 +190,7 @@ export type Database = {
           title?: string;
           kind?: RoundKind;
           planned_question_count?: number;
+          max_wager?: number | null;
           created_at?: IsoTimestamptz;
         };
         Update: {
@@ -198,6 +200,7 @@ export type Database = {
           title?: string;
           kind?: RoundKind;
           planned_question_count?: number;
+          max_wager?: number | null;
           created_at?: IsoTimestamptz;
         };
         Relationships: [

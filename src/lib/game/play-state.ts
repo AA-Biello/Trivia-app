@@ -1,5 +1,6 @@
 import "server-only";
 
+import { loadPublishedFinalResults } from "@/lib/game/final-state";
 import { buildPublicRevealForGame } from "@/lib/game/grade-state";
 import type { PublicGameStatePayload } from "@/lib/game/play-channel";
 import { loadPublishedScoreboard } from "@/lib/game/scoreboard-state";
@@ -11,6 +12,7 @@ export type HostPlaySnapshot = {
   round: {
     id: string;
     title: string;
+    kind: string;
     plannedQuestionCount: number;
   } | null;
   questions: Array<{
@@ -34,6 +36,8 @@ export type TeamPlaySnapshot = {
   teamName: string;
   publicState: PublicGameStatePayload;
   myAnswer: { text: string; submittedAt: string } | null;
+  myWager: { amount: number; lockedAt: string | null } | null;
+  myScore: number;
 };
 
 function emptyPublicState(status: GameStatus = "LOBBY"): PublicGameStatePayload {
@@ -45,8 +49,10 @@ function emptyPublicState(status: GameStatus = "LOBBY"): PublicGameStatePayload 
     questionNumber: null,
     questionCount: null,
     prompt: null,
+    maxWager: null,
     reveal: null,
     scoreboard: null,
+    finalResults: null,
   };
 }
 
@@ -69,13 +75,17 @@ export async function loadPublicGameState(
 
   let roundTitle: string | null = null;
   let questionCount: number | null = null;
+  let maxWager: number | null = null;
   if (game.current_round_id) {
     const { data: round } = await admin
       .from("rounds")
-      .select("title, planned_question_count")
+      .select("title, planned_question_count, max_wager, kind")
       .eq("id", game.current_round_id)
       .maybeSingle();
     roundTitle = round?.title ?? null;
+    if (round?.kind === "final" || round?.kind === "wager") {
+      maxWager = round.max_wager;
+    }
 
     const { count: actualCount } = await admin
       .from("questions")
@@ -88,13 +98,18 @@ export async function loadPublicGameState(
         : (round?.planned_question_count ?? null);
   }
 
-  // During review, teams only get status + round title — no prompts/keys/grades.
-  if (status === "ROUND_REVIEW" || status === "ROUND_BREAK") {
+  // During review / wager wait, teams only get safe status fields.
+  if (
+    status === "ROUND_REVIEW" ||
+    status === "ROUND_BREAK" ||
+    status === "FINAL_REVIEW"
+  ) {
     return {
       ...emptyPublicState(status),
       roundId: game.current_round_id,
       roundTitle,
       questionCount,
+      maxWager: status === "FINAL_REVIEW" ? maxWager : null,
     };
   }
 
@@ -103,7 +118,9 @@ export async function loadPublicGameState(
   let questionId: string | null = game.current_question_id;
 
   if (
-    (status === "QUESTION_OPEN" || status === "QUESTION_CLOSED") &&
+    (status === "QUESTION_OPEN" ||
+      status === "QUESTION_CLOSED" ||
+      status === "FINAL_QUESTION") &&
     game.current_question_id
   ) {
     const { data: question } = await admin
@@ -121,8 +138,13 @@ export async function loadPublicGameState(
     status === "REVEAL" ? await buildPublicRevealForGame(gameId) : null;
 
   const scoreboard =
-    status === "SCOREBOARD" || status === "GAME_OVER"
+    status === "SCOREBOARD"
       ? await loadPublishedScoreboard(gameId, game.current_round_id)
+      : null;
+
+  const finalResults =
+    status === "FINAL_RESULTS" || status === "GAME_OVER"
+      ? await loadPublishedFinalResults(gameId)
       : null;
 
   return {
@@ -135,8 +157,10 @@ export async function loadPublicGameState(
     questionCount:
       status === "REVEAL" ? (reveal?.questionCount ?? questionCount) : questionCount,
     prompt: status === "REVEAL" ? (reveal?.prompt ?? null) : prompt,
+    maxWager: status === "FINAL_QUESTION" ? maxWager : null,
     reveal,
     scoreboard,
+    finalResults,
   };
 }
 
@@ -158,14 +182,33 @@ export async function loadHostPlaySnapshot(
     .select("id", { count: "exact", head: true })
     .eq("game_id", gameId);
 
-  const { data: rounds } = await admin
-    .from("rounds")
-    .select("id, title, planned_question_count, position")
-    .eq("game_id", gameId)
-    .order("position", { ascending: true })
-    .limit(1);
+  // Prefer the current round; fall back to the first round for lobby setup.
+  let round: {
+    id: string;
+    title: string;
+    kind: string;
+    planned_question_count: number;
+  } | null = null;
 
-  const round = rounds?.[0] ?? null;
+  if (game?.current_round_id) {
+    const { data } = await admin
+      .from("rounds")
+      .select("id, title, kind, planned_question_count")
+      .eq("id", game.current_round_id)
+      .maybeSingle();
+    round = data;
+  }
+
+  if (!round) {
+    const { data: rounds } = await admin
+      .from("rounds")
+      .select("id, title, kind, planned_question_count, position")
+      .eq("game_id", gameId)
+      .order("position", { ascending: true })
+      .limit(1);
+    round = rounds?.[0] ?? null;
+  }
+
   let questions: HostPlaySnapshot["questions"] = [];
   if (round) {
     const { data: questionRows } = await admin
@@ -185,11 +228,11 @@ export async function loadHostPlaySnapshot(
 
   let submittedTeamIds: string[] = [];
   let submittedTeamNames: string[] = [];
-  if (currentQuestion) {
+  if (game?.current_question_id) {
     const { data: answers } = await admin
       .from("answers")
       .select("team_id")
-      .eq("question_id", currentQuestion.id);
+      .eq("question_id", game.current_question_id);
 
     submittedTeamIds = (answers ?? []).map((row) => row.team_id);
     if (submittedTeamIds.length > 0) {
@@ -212,6 +255,7 @@ export async function loadHostPlaySnapshot(
       ? {
           id: round.id,
           title: round.title,
+          kind: round.kind,
           plannedQuestionCount: round.planned_question_count,
         }
       : null,
@@ -232,10 +276,17 @@ export async function loadTeamPlaySnapshot(
   const publicState = await loadPublicGameState(gameId);
   const admin = createAdminClient();
 
+  const { data: team } = await admin
+    .from("teams")
+    .select("display_score")
+    .eq("id", teamId)
+    .maybeSingle();
+
   let myAnswer: TeamPlaySnapshot["myAnswer"] = null;
   const answerQuestionId =
     publicState.status === "QUESTION_OPEN" ||
-    publicState.status === "QUESTION_CLOSED"
+    publicState.status === "QUESTION_CLOSED" ||
+    publicState.status === "FINAL_QUESTION"
       ? publicState.questionId
       : null;
 
@@ -255,11 +306,30 @@ export async function loadTeamPlaySnapshot(
     }
   }
 
+  let myWager: TeamPlaySnapshot["myWager"] = null;
+  if (
+    publicState.questionId &&
+    (publicState.status === "FINAL_QUESTION" ||
+      publicState.status === "FINAL_REVIEW")
+  ) {
+    const { data: wager } = await admin
+      .from("wagers")
+      .select("amount, locked_at")
+      .eq("question_id", publicState.questionId)
+      .eq("team_id", teamId)
+      .maybeSingle();
+    if (wager) {
+      myWager = { amount: wager.amount, lockedAt: wager.locked_at };
+    }
+  }
+
   return {
     status: publicState.status,
     gameTitle,
     teamName,
     publicState,
     myAnswer,
+    myWager,
+    myScore: team?.display_score ?? 0,
   };
 }

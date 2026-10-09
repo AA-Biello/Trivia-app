@@ -20,11 +20,13 @@ const gameA = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
 const gameB = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
 
 describe("team can submit while question is open", () => {
-  it("allows submit only in QUESTION_OPEN", () => {
+  it("allows standard submit only in QUESTION_OPEN", () => {
     assert.equal(canSubmitAnswer("QUESTION_OPEN"), true);
+    assert.equal(canSubmitAnswer("FINAL_QUESTION"), false);
     assert.equal(canSubmitAnswer("QUESTION_CLOSED"), false);
     assert.equal(canSubmitAnswer("LOBBY"), false);
     assert.equal(canSubmitAnswer("ROUND_BREAK"), false);
+    assert.equal(canSubmitAnswer("FINAL_REVIEW"), false);
   });
 });
 

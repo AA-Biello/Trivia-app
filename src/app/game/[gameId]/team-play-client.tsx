@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 
 import {
   submitAnswerAction,
+  submitFinalResponseAction,
   type SubmitAnswerState,
+  type SubmitFinalResponseState,
 } from "@/app/actions/team-play";
 import {
   GAME_STATE_EVENT,
@@ -17,6 +19,7 @@ import {
   resolveTeamPlayPhase,
 } from "@/lib/game/play-rules";
 import type { TeamPlaySnapshot } from "@/lib/game/play-state";
+import { effectiveMaxWager } from "@/lib/game/wager-rules";
 import { createClient } from "@/lib/supabase/client";
 
 type Props = {
@@ -25,21 +28,37 @@ type Props = {
 };
 
 const initialSubmit: SubmitAnswerState = null;
+const initialFinal: SubmitFinalResponseState = null;
 
 export function TeamPlayClient({ gameId, initial }: Props) {
   const router = useRouter();
   const [publicState, setPublicState] = useState(initial.publicState);
   const [myAnswer, setMyAnswer] = useState(initial.myAnswer);
+  const myWager = initial.myWager;
+  const myScore = initial.myScore;
   const questionIdRef = useRef(initial.publicState.questionId);
   const [submitState, submitAction, pending] = useActionState(
     submitAnswerAction,
     initialSubmit,
+  );
+  const [finalState, finalAction, finalPending] = useActionState(
+    submitFinalResponseAction,
+    initialFinal,
   );
 
   const effectiveAnswer =
     myAnswer ??
     (submitState?.ok && submitState.answerText
       ? { text: submitState.answerText, submittedAt: "" }
+      : null) ??
+    (finalState?.ok && finalState.answerText
+      ? { text: finalState.answerText, submittedAt: "" }
+      : null);
+
+  const effectiveWager =
+    myWager ??
+    (finalState?.ok && finalState.amount != null
+      ? { amount: finalState.amount, lockedAt: "" }
       : null);
 
   useEffect(() => {
@@ -70,9 +89,12 @@ export function TeamPlayClient({ gameId, initial }: Props) {
   const phase = resolveTeamPlayPhase({
     status: publicState.status,
     hasAnswer: Boolean(effectiveAnswer),
+    hasWager: Boolean(effectiveWager),
   });
 
   const reveal = publicState.reveal;
+  const configuredMaxWager = publicState.maxWager ?? 0;
+  const teamEffectiveMax = effectiveMaxWager(configuredMaxWager, myScore);
 
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-8 px-6 py-16">
@@ -296,6 +318,150 @@ export function TeamPlayClient({ gameId, initial }: Props) {
             </ol>
           ) : (
             <p className="text-sm text-zinc-600">Scores coming soon…</p>
+          )}
+          <p className="text-sm text-zinc-500">
+            Waiting for the host to start the next round or final wager…
+          </p>
+        </div>
+      ) : null}
+
+      {phase === "final_question_unanswered" && publicState.questionId ? (
+        <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <p className="text-sm font-medium text-zinc-500">Final question</p>
+          <p className="text-xl font-semibold text-zinc-900">
+            {publicState.prompt}
+          </p>
+          <p className="text-sm text-zinc-600">
+            Current score:{" "}
+            <span className="font-semibold text-zinc-900">{myScore}</span>
+            {" · "}
+            Max wager:{" "}
+            <span className="font-semibold text-zinc-900">{teamEffectiveMax}</span>
+            {configuredMaxWager !== teamEffectiveMax ? (
+              <span className="text-zinc-500">
+                {" "}
+                (host max {configuredMaxWager})
+              </span>
+            ) : null}
+          </p>
+          <form action={finalAction} className="flex flex-col gap-3">
+            <input type="hidden" name="gameId" value={gameId} />
+            <input
+              type="hidden"
+              name="questionId"
+              value={publicState.questionId}
+            />
+            <label className="flex flex-col gap-1 text-sm font-medium text-zinc-800">
+              Answer
+              <textarea
+                name="answerText"
+                required
+                rows={4}
+                maxLength={500}
+                className="rounded-lg border border-zinc-300 px-3 py-2 text-base"
+                placeholder="Type your final answer"
+              />
+            </label>
+            <label className="flex flex-col gap-1 text-sm font-medium text-zinc-800">
+              Wager
+              <input
+                name="amount"
+                type="number"
+                min={0}
+                max={teamEffectiveMax}
+                step={1}
+                required
+                className="rounded-lg border border-zinc-300 px-3 py-2"
+                placeholder="0"
+              />
+            </label>
+            {finalState?.error ? (
+              <p className="text-sm text-red-700" role="alert">
+                {finalState.error}
+              </p>
+            ) : null}
+            <button
+              type="submit"
+              disabled={finalPending}
+              className="rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {finalPending ? "Locking…" : "Lock answer & wager"}
+            </button>
+          </form>
+        </div>
+      ) : null}
+
+      {phase === "final_question_answered" ? (
+        <div className="flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 px-5 py-6">
+          <p className="text-sm font-medium text-emerald-900">Final question</p>
+          <p className="font-semibold text-zinc-900">{publicState.prompt}</p>
+          <div className="rounded-lg bg-white px-4 py-3 text-zinc-800">
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Your answer
+            </p>
+            <p className="mt-1 whitespace-pre-wrap">{effectiveAnswer?.text}</p>
+          </div>
+          <div className="rounded-lg bg-white px-4 py-3 text-zinc-800">
+            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+              Your wager
+            </p>
+            <p className="mt-1 text-lg font-semibold">
+              {effectiveWager?.amount ?? 0}
+            </p>
+          </div>
+          <p className="text-lg font-semibold text-emerald-900">
+            Final answer locked
+          </p>
+          <p className="text-zinc-600">Waiting for the host…</p>
+        </div>
+      ) : null}
+
+      {phase === "final_review" ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-6 py-10 text-center">
+          <p className="text-xl font-medium text-amber-950">
+            The host is grading final answers
+          </p>
+          <p className="mt-2 text-amber-900/80">
+            Results stay hidden until the host publishes standings.
+          </p>
+        </div>
+      ) : null}
+
+      {phase === "final_results" ? (
+        <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold text-zinc-900">Final standings</h2>
+          {publicState.finalResults && publicState.finalResults.length > 0 ? (
+            <ol className="divide-y divide-zinc-200 rounded-lg border border-zinc-200">
+              {publicState.finalResults.map((row) => (
+                <li
+                  key={`${row.rank}-${row.teamName}`}
+                  className="flex flex-col gap-1 px-4 py-3"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <span className="mr-3 font-mono text-sm text-zinc-500">
+                        #{row.rank}
+                      </span>
+                      <span className="font-medium text-zinc-900">
+                        {row.teamName}
+                      </span>
+                    </div>
+                    <span className="text-lg font-semibold text-zinc-900">
+                      {row.finalScore}
+                    </span>
+                  </div>
+                  <p className="text-sm text-zinc-600">
+                    Start {row.startingScore} · Wager {row.wager} ·{" "}
+                    {row.isCorrect ? "Correct ✓" : "Incorrect ✕"}
+                  </p>
+                  <p className="whitespace-pre-wrap text-sm text-zinc-700">
+                    {row.answerText ?? "(no answer)"}
+                  </p>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-sm text-zinc-600">Standings coming soon…</p>
           )}
         </div>
       ) : null}

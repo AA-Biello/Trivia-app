@@ -6,12 +6,13 @@ import { useRouter } from "next/navigation";
 import {
   advanceOrEndRoundAction,
   closeQuestionAction,
-  createRoundAction,
   openQuestionAction,
   type HostPlayActionState,
 } from "@/app/actions/host-play";
+import { HostFinalPanel } from "@/app/host/[gameId]/host-final-panel";
 import { HostGradingPanel } from "@/app/host/[gameId]/host-grading-panel";
 import { HostRevealPanel } from "@/app/host/[gameId]/host-reveal-panel";
+import { HostRoundList } from "@/app/host/[gameId]/host-round-list";
 import {
   LOBBY_TEAM_JOINED_EVENT,
   lobbyChannelName,
@@ -20,22 +21,25 @@ import {
 import {
   ANSWER_PROGRESS_EVENT,
   GAME_STATE_EVENT,
+  WAGER_PROGRESS_EVENT,
   playChannelName,
   type AnswerProgressPayload,
+  type PublicFinalResultsRow,
   type PublicGameStatePayload,
   type PublicScoreboardRow,
+  type WagerProgressPayload,
 } from "@/lib/game/play-channel";
 import {
-  MUSIC_ROUND_QUESTION_COUNT,
-  STANDARD_ROUND_QUESTION_COUNT,
   formatQuestionProgress,
   nextStepAfterClose,
 } from "@/lib/game/play-rules";
 import type { HostPlaySnapshot } from "@/lib/game/play-state";
+import type { HostRoundListItem } from "@/lib/game/round-rules";
 import type {
   HostGradeQuestionView,
   HostRevealSnapshot,
 } from "@/lib/game/scoring";
+import type { HostFinalSnapshot } from "@/lib/game/wager-rules";
 import { createClient } from "@/lib/supabase/client";
 import type { GameStatus } from "@/types/game";
 
@@ -50,6 +54,9 @@ type Props = {
   gradingQuestions: HostGradeQuestionView[];
   revealSnapshot: HostRevealSnapshot | null;
   scoreboard: PublicScoreboardRow[] | null;
+  finalSnapshot: HostFinalSnapshot | null;
+  finalResults: PublicFinalResultsRow[] | null;
+  rounds: HostRoundListItem[];
 };
 
 const initialAction: HostPlayActionState = null;
@@ -65,6 +72,9 @@ export function HostConsole({
   gradingQuestions,
   revealSnapshot,
   scoreboard,
+  finalSnapshot,
+  finalResults,
+  rounds,
 }: Props) {
   const router = useRouter();
   const [teams, setTeams] = useState(initialTeams);
@@ -76,8 +86,8 @@ export function HostConsole({
   const [submittedNames, setSubmittedNames] = useState(
     initialPlay.submittedTeamNames,
   );
-  const [questionCount, setQuestionCount] = useState<number>(
-    STANDARD_ROUND_QUESTION_COUNT,
+  const [lockedFinalIds, setLockedFinalIds] = useState(
+    () => new Set(finalSnapshot?.lockedTeamIds ?? []),
   );
   const currentQuestionIdRef = useRef(initialPlay.currentQuestion?.id);
 
@@ -116,6 +126,7 @@ export function HostConsole({
         if (questionChanged) {
           setSubmittedIds(new Set());
           setSubmittedNames([]);
+          setLockedFinalIds(new Set());
         }
         setPlay((current) => ({
           ...current,
@@ -150,6 +161,24 @@ export function HostConsole({
             ? current
             : [...current, progress.teamName],
         );
+        if (status === "FINAL_QUESTION" || play.status === "FINAL_QUESTION") {
+          setLockedFinalIds((current) => {
+            if (current.has(progress.teamId)) return current;
+            const next = new Set(current);
+            next.add(progress.teamId);
+            return next;
+          });
+        }
+      })
+      .on("broadcast", { event: WAGER_PROGRESS_EVENT }, ({ payload }) => {
+        const progress = payload as WagerProgressPayload;
+        if (!progress?.teamId) return;
+        setLockedFinalIds((current) => {
+          if (current.has(progress.teamId)) return current;
+          const next = new Set(current);
+          next.add(progress.teamId);
+          return next;
+        });
       })
       .subscribe();
 
@@ -157,12 +186,8 @@ export function HostConsole({
       void supabase.removeChannel(lobby);
       void supabase.removeChannel(playChannel);
     };
-  }, [gameId, router]);
+  }, [gameId, router, status, play.status]);
 
-  const [createState, createAction, createPending] = useActionState(
-    createRoundAction,
-    initialAction,
-  );
   const [openState, openAction, openPending] = useActionState(
     openQuestionAction,
     initialAction,
@@ -177,21 +202,13 @@ export function HostConsole({
   );
 
   useEffect(() => {
-    if (
-      createState?.ok ||
-      openState?.ok ||
-      closeState?.ok ||
-      advanceState?.ok
-    ) {
+    if (openState?.ok || closeState?.ok || advanceState?.ok) {
       router.refresh();
     }
-  }, [createState, openState, closeState, advanceState, router]);
+  }, [openState, closeState, advanceState, router]);
 
   const actionError =
-    createState?.error ||
-    openState?.error ||
-    closeState?.error ||
-    advanceState?.error;
+    openState?.error || closeState?.error || advanceState?.error;
 
   const firstQuestion = play.questions[0] ?? null;
   const current = play.currentQuestion;
@@ -201,6 +218,9 @@ export function HostConsole({
     play.questions.some((q) => q.position === current.position + 1);
   const afterClose =
     current != null ? nextStepAfterClose(hasNextQuestion) : null;
+
+  const hasFinalRound = rounds.some((r) => r.isFinal);
+  const showFinalSetup = status === "SCOREBOARD" && !hasFinalRound;
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-10 px-6 py-12">
@@ -266,7 +286,11 @@ export function HostConsole({
                 className="flex items-center justify-between px-4 py-3 text-zinc-900"
               >
                 <span className="font-medium">{team.name}</span>
-                {current && submittedIds.has(team.id) ? (
+                {status === "FINAL_QUESTION" && lockedFinalIds.has(team.id) ? (
+                  <span className="text-xs font-medium text-emerald-700">
+                    Final locked
+                  </span>
+                ) : current && submittedIds.has(team.id) ? (
                   <span className="text-xs font-medium text-emerald-700">
                     Answered
                   </span>
@@ -281,97 +305,20 @@ export function HostConsole({
         )}
       </section>
 
+      <HostRoundList
+        gameId={gameId}
+        status={status}
+        currentRoundId={play.round?.id ?? null}
+        rounds={rounds}
+      />
+
       <section className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5">
         <h2 className="text-lg font-semibold text-zinc-900">Round controls</h2>
 
-        {!play.round ? (
-          <form action={createAction} className="flex flex-col gap-4">
-            <input type="hidden" name="gameId" value={gameId} />
-            <label className="flex flex-col gap-1 text-sm font-medium">
-              Round title
-              <input
-                name="title"
-                defaultValue="Round 1"
-                maxLength={80}
-                className="rounded-lg border border-zinc-300 px-3 py-2"
-              />
-            </label>
-            <fieldset className="flex flex-col gap-2">
-              <legend className="text-sm font-medium">Questions in this round</legend>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => setQuestionCount(STANDARD_ROUND_QUESTION_COUNT)}
-                  className={`rounded-lg border px-3 py-1.5 text-sm ${
-                    questionCount === STANDARD_ROUND_QUESTION_COUNT
-                      ? "border-zinc-900 bg-zinc-900 text-white"
-                      : "border-zinc-300 bg-white text-zinc-800"
-                  }`}
-                >
-                  Standard ({STANDARD_ROUND_QUESTION_COUNT})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setQuestionCount(MUSIC_ROUND_QUESTION_COUNT)}
-                  className={`rounded-lg border px-3 py-1.5 text-sm ${
-                    questionCount === MUSIC_ROUND_QUESTION_COUNT
-                      ? "border-zinc-900 bg-zinc-900 text-white"
-                      : "border-zinc-300 bg-white text-zinc-800"
-                  }`}
-                >
-                  Music ({MUSIC_ROUND_QUESTION_COUNT})
-                </button>
-              </div>
-              <label className="flex flex-col gap-1 text-sm font-medium">
-                Custom count
-                <input
-                  name="questionCount"
-                  type="number"
-                  min={1}
-                  max={30}
-                  value={questionCount}
-                  onChange={(event) => {
-                    const next = Number.parseInt(event.target.value, 10);
-                    if (Number.isInteger(next)) {
-                      setQuestionCount(next);
-                    }
-                  }}
-                  className="w-28 rounded-lg border border-zinc-300 px-3 py-2"
-                />
-              </label>
-            </fieldset>
-            {Array.from({ length: questionCount }, (_, i) => (
-              <div key={i} className="flex flex-col gap-2">
-                <label className="flex flex-col gap-1 text-sm font-medium">
-                  Question {i + 1}
-                  <textarea
-                    name={`prompt${i + 1}`}
-                    required
-                    rows={2}
-                    className="rounded-lg border border-zinc-300 px-3 py-2"
-                    placeholder={`Prompt for question ${i + 1}`}
-                  />
-                </label>
-                <label className="flex flex-col gap-1 text-sm font-medium">
-                  Correct answer (host only)
-                  <input
-                    name={`correct${i + 1}`}
-                    className="rounded-lg border border-zinc-300 px-3 py-2"
-                    placeholder="Optional — editable during review"
-                  />
-                </label>
-              </div>
-            ))}
-            <button
-              type="submit"
-              disabled={createPending || status !== "LOBBY"}
-              className="rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {createPending
-                ? "Saving…"
-                : `Save round (${questionCount} questions)`}
-            </button>
-          </form>
+        {!play.round || play.round.kind === "final" || play.round.kind === "wager" ? (
+          <p className="text-sm text-zinc-600">
+            Create a round above, then open its first question from here.
+          </p>
         ) : (
           <div className="flex flex-col gap-4">
             <p className="text-zinc-700">
@@ -453,13 +400,13 @@ export function HostConsole({
               </div>
             ) : null}
 
-            {status === "ROUND_BREAK" ||
-            status === "ROUND_REVIEW" ||
-            status === "REVEAL" ||
-            status === "RESULTS_PUBLISHED" ||
-            status === "SCOREBOARD" ? (
-              <p className="text-sm text-zinc-600">
-                Use the grading and reveal panels below.
+            {status === "FINAL_QUESTION" && finalSnapshot ? (
+              <p className="text-sm text-zinc-700">
+                Final responses locked:{" "}
+                <span className="font-semibold">
+                  {lockedFinalIds.size || finalSnapshot.lockedTeamIds.length} /{" "}
+                  {teams.length || play.teamCount}
+                </span>
               </p>
             ) : null}
           </div>
@@ -477,6 +424,15 @@ export function HostConsole({
         status={status}
         reveal={revealSnapshot}
         scoreboard={scoreboard}
+      />
+
+      <HostFinalPanel
+        gameId={gameId}
+        status={status}
+        teamCount={teams.length || play.teamCount}
+        finalSnapshot={finalSnapshot}
+        finalResults={finalResults}
+        showFinalSetup={showFinalSetup}
       />
     </main>
   );

@@ -25,7 +25,7 @@ export function parseQuestionCount(value: unknown): number | null {
 }
 
 export function canCreateRound(status: GameStatus): boolean {
-  return status === "LOBBY";
+  return status === "LOBBY" || status === "SCOREBOARD";
 }
 
 export function canOpenQuestion(status: GameStatus): boolean {
@@ -36,6 +36,7 @@ export function canCloseQuestion(status: GameStatus): boolean {
   return status === "QUESTION_OPEN";
 }
 
+/** Standard-round answers only. Final uses submitFinalResponseAction. */
 export function canSubmitAnswer(status: GameStatus): boolean {
   return status === "QUESTION_OPEN";
 }
@@ -117,13 +118,18 @@ export type TeamPlayPhase =
   | "reveal"
   | "awaiting_scoreboard"
   | "scoreboard"
+  | "final_question_unanswered"
+  | "final_question_answered"
+  | "final_review"
+  | "final_results"
   | "other";
 
 export function resolveTeamPlayPhase(input: {
   status: GameStatus;
   hasAnswer: boolean;
+  hasWager?: boolean;
 }): TeamPlayPhase {
-  const { status, hasAnswer } = input;
+  const { status, hasAnswer, hasWager } = input;
   if (status === "LOBBY") return "lobby";
   if (status === "QUESTION_OPEN") {
     return hasAnswer ? "question_open_answered" : "question_open_unanswered";
@@ -135,8 +141,16 @@ export function resolveTeamPlayPhase(input: {
   if (status === "ROUND_REVIEW") return "round_review";
   if (status === "REVEAL") return "reveal";
   if (status === "RESULTS_PUBLISHED") return "awaiting_scoreboard";
-  if (status === "SCOREBOARD" || status === "GAME_OVER") {
-    return "scoreboard";
+  if (status === "SCOREBOARD") return "scoreboard";
+  // Legacy statuses map to waiting — combined final uses FINAL_QUESTION only.
+  if (status === "WAGER_OPEN" || status === "WAGER_LOCKED") return "other";
+  if (status === "FINAL_QUESTION") {
+    const locked = Boolean(hasAnswer && hasWager);
+    return locked ? "final_question_answered" : "final_question_unanswered";
+  }
+  if (status === "FINAL_REVIEW") return "final_review";
+  if (status === "FINAL_RESULTS" || status === "GAME_OVER") {
+    return "final_results";
   }
   return "other";
 }

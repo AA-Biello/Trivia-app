@@ -1,6 +1,7 @@
 export const DEFAULT_CORRECT_POINTS = 1;
 export const DEFAULT_INCORRECT_POINTS = 0;
 export const ANSWER_GRADE_REASON = "answer_grade";
+export { FINAL_WAGER_REASON } from "@/lib/game/wager-rules";
 
 /** Host-only grading row — never send raw grades to team clients before reveal. */
 export type HostGradeQuestionView = {

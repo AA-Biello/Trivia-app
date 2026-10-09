@@ -16,9 +16,8 @@ export async function loadPublishedScoreboard(
     .eq("id", gameId)
     .maybeSingle();
 
-  // Scoreboard is public only after host publishes (SCOREBOARD), not merely
-  // after reveal finishes (RESULTS_PUBLISHED).
-  if (!game || (game.status !== "SCOREBOARD" && game.status !== "GAME_OVER")) {
+  // Mid-game scoreboard only — final standings use FINAL_RESULTS payload.
+  if (!game || game.status !== "SCOREBOARD") {
     return null;
   }
 

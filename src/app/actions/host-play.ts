@@ -13,6 +13,12 @@ import {
   parseQuestionCount,
 } from "@/lib/game/play-rules";
 import { loadPublicGameState } from "@/lib/game/play-state";
+import {
+  canCreateNextRound,
+  canStartNextRound,
+  findNextPlayableRound,
+} from "@/lib/game/round-rules";
+import { clearRevealStateForGame } from "@/lib/game/round-state";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { GameStatus } from "@/types/game";
 
@@ -32,12 +38,17 @@ async function publishGameState(gameId: string) {
   revalidatePath(`/game/${gameId}`);
 }
 
+/**
+ * Create a standard/music/custom round.
+ * - LOBBY: first (or additional pre-game) round; becomes current if none set.
+ * - SCOREBOARD: create next round without starting it (status stays SCOREBOARD).
+ */
 export async function createRoundAction(
   _prev: HostPlayActionState,
   formData: FormData,
 ): Promise<HostPlayActionState> {
   const gameId = String(formData.get("gameId") ?? "");
-  const title = String(formData.get("title") ?? "").trim() || "Round 1";
+  const title = String(formData.get("title") ?? "").trim() || "Round";
   const questionCount = parseQuestionCount(formData.get("questionCount"));
 
   try {
@@ -64,29 +75,51 @@ export async function createRoundAction(
   const admin = createAdminClient();
   const { data: game } = await admin
     .from("games")
-    .select("status")
+    .select("status, current_round_id")
     .eq("id", gameId)
     .single();
 
   if (!game || !canCreateRound(game.status as GameStatus)) {
-    return { error: "Rounds can only be created while the game is in the lobby." };
+    return {
+      error: "Rounds can only be created in the lobby or after a scoreboard.",
+    };
   }
 
-  const { data: existing } = await admin
+  if (
+    game.status === "SCOREBOARD" &&
+    !canCreateNextRound(game.status as GameStatus)
+  ) {
+    return { error: "Cannot create another round right now." };
+  }
+
+  const { data: existingFinal } = await admin
     .from("rounds")
     .select("id")
     .eq("game_id", gameId)
+    .eq("kind", "final")
     .limit(1);
-  if (existing && existing.length > 0) {
-    return { error: "This game already has a round." };
+  if (existingFinal && existingFinal.length > 0) {
+    return { error: "Cannot add rounds after the final wager has been created." };
   }
+
+  const { data: lastRound } = await admin
+    .from("rounds")
+    .select("position")
+    .eq("game_id", gameId)
+    .order("position", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const position = (lastRound?.position ?? 0) + 1;
+  const defaultTitle =
+    title === "Round" || title === "Round 1" ? `Round ${position}` : title;
 
   const { data: round, error: roundError } = await admin
     .from("rounds")
     .insert({
       game_id: gameId,
-      position: 1,
-      title,
+      position,
+      title: defaultTitle,
       kind: "standard",
       planned_question_count: questionCount,
     })
@@ -132,12 +165,111 @@ export async function createRoundAction(
     return { error: "Could not save correct answers." };
   }
 
-  await admin
-    .from("games")
-    .update({ current_round_id: round.id })
-    .eq("id", gameId);
+  // Lobby: set as current if none. Scoreboard: leave current on scored round.
+  if (game.status === "LOBBY" && !game.current_round_id) {
+    await admin
+      .from("games")
+      .update({ current_round_id: round.id })
+      .eq("id", gameId);
+  }
 
   revalidatePath(`/host/${gameId}`);
+  return { ok: true };
+}
+
+/**
+ * SCOREBOARD → open the next authored standard round's first question.
+ * Clears reveal state; preserves cumulative display_score / score_events.
+ */
+export async function startNextRoundAction(
+  _prev: HostPlayActionState,
+  formData: FormData,
+): Promise<HostPlayActionState> {
+  const gameId = String(formData.get("gameId") ?? "");
+  const requestedRoundId = String(formData.get("roundId") ?? "") || null;
+
+  try {
+    await requireHostSessionForGame(gameId);
+  } catch {
+    return { error: "Host session invalid for this game." };
+  }
+
+  const admin = createAdminClient();
+  const { data: game } = await admin
+    .from("games")
+    .select("status, current_round_id")
+    .eq("id", gameId)
+    .single();
+
+  if (!game || !canStartNextRound(game.status as GameStatus)) {
+    return { error: "Next round can only start from the scoreboard." };
+  }
+
+  const { data: rounds } = await admin
+    .from("rounds")
+    .select("id, position, kind")
+    .eq("game_id", gameId)
+    .order("position", { ascending: true });
+
+  const next =
+    requestedRoundId != null
+      ? (rounds ?? []).find(
+          (r) =>
+            r.id === requestedRoundId &&
+            r.kind !== "final" &&
+            r.kind !== "wager",
+        ) ?? null
+      : findNextPlayableRound(rounds ?? [], game.current_round_id);
+
+  if (!next) {
+    return {
+      error: "No next round is ready. Create another round, or start the final wager.",
+    };
+  }
+
+  // Do not re-open a round that already has published answer_grade events.
+  const { data: published } = await admin
+    .from("score_events")
+    .select("id")
+    .eq("game_id", gameId)
+    .eq("round_id", next.id)
+    .eq("reason", "answer_grade")
+    .not("published_at", "is", null)
+    .limit(1);
+
+  if (published && published.length > 0) {
+    return { error: "That round has already been scored." };
+  }
+
+  const { data: firstQuestion } = await admin
+    .from("questions")
+    .select("id")
+    .eq("round_id", next.id)
+    .order("position", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!firstQuestion) {
+    return { error: "Next round has no questions." };
+  }
+
+  await clearRevealStateForGame(gameId);
+
+  const { error } = await admin
+    .from("games")
+    .update({
+      status: "QUESTION_OPEN",
+      current_round_id: next.id,
+      current_question_id: firstQuestion.id,
+    })
+    .eq("id", gameId);
+
+  if (error) {
+    console.error("startNextRound", error);
+    return { error: "Could not start the next round." };
+  }
+
+  await publishGameState(gameId);
   return { ok: true };
 }
 
@@ -275,7 +407,6 @@ export async function advanceOrEndRoundAction(
     .eq("position", nextPos)
     .maybeSingle();
 
-  // Completion follows the round's actual questions, not a fixed length.
   const step = nextStepAfterClose(Boolean(nextQuestion));
 
   if (step === "round_break") {

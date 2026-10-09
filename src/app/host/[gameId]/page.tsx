@@ -10,10 +10,15 @@ import {
 } from "@/lib/auth/sessions";
 import { getAppOrigin, joinUrlForCode } from "@/lib/game/app-url";
 import {
+  loadHostFinalSnapshot,
+  loadPublishedFinalResults,
+} from "@/lib/game/final-state";
+import {
   loadHostGradingQuestions,
   loadHostRevealSnapshot,
 } from "@/lib/game/grade-state";
 import { loadHostPlaySnapshot } from "@/lib/game/play-state";
+import { loadHostRoundList } from "@/lib/game/round-state";
 import { loadPublishedScoreboard } from "@/lib/game/scoreboard-state";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -58,13 +63,14 @@ export default async function HostGamePage({ params }: PageProps) {
   }
 
   const admin = createAdminClient();
-  const [{ data: teams, error }, play] = await Promise.all([
+  const [{ data: teams, error }, play, rounds] = await Promise.all([
     admin
       .from("teams")
       .select("id, name, created_at")
       .eq("game_id", session.gameId)
       .order("created_at", { ascending: true }),
     loadHostPlaySnapshot(session.gameId),
+    loadHostRoundList(session.gameId),
   ]);
 
   if (error) {
@@ -93,6 +99,19 @@ export default async function HostGamePage({ params }: PageProps) {
       ? await loadPublishedScoreboard(session.gameId, play.round?.id ?? null)
       : null;
 
+  const finalSnapshot =
+    play.status === "FINAL_QUESTION" ||
+    play.status === "FINAL_REVIEW" ||
+    play.status === "FINAL_RESULTS" ||
+    play.status === "GAME_OVER"
+      ? await loadHostFinalSnapshot(session.gameId)
+      : null;
+
+  const finalResults =
+    play.status === "FINAL_RESULTS" || play.status === "GAME_OVER"
+      ? await loadPublishedFinalResults(session.gameId)
+      : null;
+
   const origin = await getAppOrigin();
   const joinUrl = joinUrlForCode(origin, session.joinCode);
   const qrDataUrl = await QRCode.toDataURL(joinUrl, {
@@ -111,15 +130,9 @@ export default async function HostGamePage({ params }: PageProps) {
     play.status,
     play.round?.id ?? "noround",
     play.currentQuestion?.id ?? "noq",
-    revealSnapshot?.questionId ?? "noreveal",
-    revealSnapshot?.correctAnswerRevealed ? "ca1" : "ca0",
-    revealSnapshot?.teamAnswersRevealed ? "ta1" : "ta0",
+    rounds.map((r) => `${r.id}:${r.status}`).join("|"),
+    finalSnapshot?.lockedTeamIds.join(",") ?? "",
     play.submittedTeamIds.join(","),
-    gradingQuestions
-      .flatMap((q) =>
-        q.answers.map((a) => `${a.answerId}:${a.isCorrect}:${a.pointsAwarded}`),
-      )
-      .join("|"),
   ].join(":");
 
   return (
@@ -135,6 +148,9 @@ export default async function HostGamePage({ params }: PageProps) {
       gradingQuestions={gradingQuestions}
       revealSnapshot={revealSnapshot}
       scoreboard={scoreboard}
+      finalSnapshot={finalSnapshot}
+      finalResults={finalResults}
+      rounds={rounds}
     />
   );
 }

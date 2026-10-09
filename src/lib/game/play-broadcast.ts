@@ -3,9 +3,11 @@ import "server-only";
 import {
   ANSWER_PROGRESS_EVENT,
   GAME_STATE_EVENT,
+  WAGER_PROGRESS_EVENT,
   playChannelName,
   type AnswerProgressPayload,
   type PublicGameStatePayload,
+  type WagerProgressPayload,
 } from "@/lib/game/play-channel";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -39,4 +41,11 @@ export async function broadcastAnswerProgress(
   progress: AnswerProgressPayload,
 ): Promise<void> {
   await broadcast(gameId, ANSWER_PROGRESS_EVENT, progress);
+}
+
+export async function broadcastWagerProgress(
+  gameId: string,
+  progress: WagerProgressPayload,
+): Promise<void> {
+  await broadcast(gameId, WAGER_PROGRESS_EVENT, progress);
 }
