@@ -1,7 +1,7 @@
 import Link from "next/link";
 import QRCode from "qrcode";
 
-import { HostLobbyClient } from "@/app/host/[gameId]/host-lobby-client";
+import { HostConsole } from "@/app/host/[gameId]/host-console";
 import { HostResumeCard } from "@/components/host-resume-card";
 import {
   SessionError,
@@ -9,6 +9,7 @@ import {
   requireHostSessionForGame,
 } from "@/lib/auth/sessions";
 import { getAppOrigin, joinUrlForCode } from "@/lib/game/app-url";
+import { loadHostPlaySnapshot } from "@/lib/game/play-state";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type PageProps = {
@@ -52,11 +53,14 @@ export default async function HostGamePage({ params }: PageProps) {
   }
 
   const admin = createAdminClient();
-  const { data: teams, error } = await admin
-    .from("teams")
-    .select("id, name, created_at")
-    .eq("game_id", session.gameId)
-    .order("created_at", { ascending: true });
+  const [{ data: teams, error }, play] = await Promise.all([
+    admin
+      .from("teams")
+      .select("id, name, created_at")
+      .eq("game_id", session.gameId)
+      .order("created_at", { ascending: true }),
+    loadHostPlaySnapshot(session.gameId),
+  ]);
 
   if (error) {
     console.error("host lobby teams", error);
@@ -76,14 +80,23 @@ export default async function HostGamePage({ params }: PageProps) {
     createdAt: team.created_at,
   }));
 
+  const consoleKey = [
+    play.status,
+    play.round?.id ?? "noround",
+    play.currentQuestion?.id ?? "noq",
+    play.submittedTeamIds.join(","),
+  ].join(":");
+
   return (
-    <HostLobbyClient
+    <HostConsole
+      key={consoleKey}
       gameId={session.gameId}
-      initialTeams={initialTeams}
+      title={session.title}
       joinCode={session.joinCode}
       joinUrl={joinUrl}
       qrDataUrl={qrDataUrl}
-      title={session.title}
+      initialTeams={initialTeams}
+      initialPlay={play}
     />
   );
 }
