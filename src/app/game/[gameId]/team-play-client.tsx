@@ -72,6 +72,8 @@ export function TeamPlayClient({ gameId, initial }: Props) {
     hasAnswer: Boolean(effectiveAnswer),
   });
 
+  const reveal = publicState.reveal;
+
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-8 px-6 py-16">
       <div className="flex flex-col gap-2">
@@ -180,12 +182,121 @@ export function TeamPlayClient({ gameId, initial }: Props) {
         </div>
       ) : null}
 
-      {phase === "round_break" ? (
+      {phase === "round_break" || phase === "round_review" ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-6 py-10 text-center">
-          <p className="text-xl font-medium text-amber-950">Round complete</p>
-          <p className="mt-2 text-amber-900/80">
-            The host is reviewing answers
+          <p className="text-xl font-medium text-amber-950">
+            The host is reviewing your answers
           </p>
+          <p className="mt-2 text-amber-900/80">
+            Hang tight — results will appear when the host starts the reveal.
+          </p>
+        </div>
+      ) : null}
+
+      {phase === "reveal" && reveal ? (
+        <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <p className="text-sm font-medium text-zinc-500">
+            {formatQuestionProgress(
+              reveal.questionNumber,
+              reveal.questionCount,
+            )}
+          </p>
+          <p className="text-xl font-semibold text-zinc-900">{reveal.prompt}</p>
+
+          {reveal.correctAnswer != null ? (
+            <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-emerald-800">
+                Correct answer
+              </p>
+              <p className="mt-1 text-lg font-semibold text-emerald-950">
+                {reveal.correctAnswer}
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-zinc-500">
+              Waiting for the host to reveal the correct answer…
+            </p>
+          )}
+
+          {reveal.teamAnswers ? (
+            <ul className="divide-y divide-zinc-200 rounded-lg border border-zinc-200">
+              {reveal.teamAnswers.map((row) => (
+                <li
+                  key={`${row.teamName}-${row.answerText}`}
+                  className="flex items-start justify-between gap-3 px-4 py-3"
+                >
+                  <div>
+                    <p className="font-medium text-zinc-900">{row.teamName}</p>
+                    <p className="whitespace-pre-wrap text-zinc-700">
+                      {row.answerText}
+                    </p>
+                  </div>
+                  <span
+                    className={`shrink-0 text-lg font-semibold ${
+                      row.isCorrect ? "text-emerald-700" : "text-zinc-500"
+                    }`}
+                    aria-label={row.isCorrect ? "Correct" : "Incorrect"}
+                  >
+                    {row.isCorrect ? "✓" : "✕"}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : reveal.correctAnswer != null ? (
+            <p className="text-sm text-zinc-500">
+              Waiting for the host to reveal team answers…
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {phase === "reveal" && !reveal ? (
+        <div className="rounded-xl border border-zinc-200 bg-white px-6 py-8 text-center text-zinc-600">
+          Waiting for the host to reveal…
+        </div>
+      ) : null}
+
+      {phase === "awaiting_scoreboard" ? (
+        <div className="rounded-xl border border-zinc-200 bg-white px-6 py-10 text-center">
+          <p className="text-xl font-medium text-zinc-900">Reveal complete</p>
+          <p className="mt-2 text-zinc-600">
+            Waiting for the host to publish the scoreboard…
+          </p>
+        </div>
+      ) : null}
+
+      {phase === "scoreboard" ? (
+        <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
+          <h2 className="text-lg font-semibold text-zinc-900">Scoreboard</h2>
+          {publicState.scoreboard && publicState.scoreboard.length > 0 ? (
+            <ol className="divide-y divide-zinc-200 rounded-lg border border-zinc-200">
+              {publicState.scoreboard.map((row) => (
+                <li
+                  key={`${row.rank}-${row.teamName}`}
+                  className="flex items-center justify-between px-4 py-3"
+                >
+                  <div>
+                    <span className="mr-3 font-mono text-sm text-zinc-500">
+                      #{row.rank}
+                    </span>
+                    <span className="font-medium text-zinc-900">
+                      {row.teamName}
+                    </span>
+                  </div>
+                  <div className="text-right text-sm">
+                    <p className="font-semibold text-zinc-900">
+                      {row.totalPoints} total
+                    </p>
+                    <p className="text-zinc-500">
+                      {row.roundPoints} this round
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          ) : (
+            <p className="text-sm text-zinc-600">Scores coming soon…</p>
+          )}
         </div>
       ) : null}
 

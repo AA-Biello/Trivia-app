@@ -10,6 +10,8 @@ import {
   openQuestionAction,
   type HostPlayActionState,
 } from "@/app/actions/host-play";
+import { HostGradingPanel } from "@/app/host/[gameId]/host-grading-panel";
+import { HostRevealPanel } from "@/app/host/[gameId]/host-reveal-panel";
 import {
   LOBBY_TEAM_JOINED_EVENT,
   lobbyChannelName,
@@ -21,6 +23,7 @@ import {
   playChannelName,
   type AnswerProgressPayload,
   type PublicGameStatePayload,
+  type PublicScoreboardRow,
 } from "@/lib/game/play-channel";
 import {
   MUSIC_ROUND_QUESTION_COUNT,
@@ -29,6 +32,10 @@ import {
   nextStepAfterClose,
 } from "@/lib/game/play-rules";
 import type { HostPlaySnapshot } from "@/lib/game/play-state";
+import type {
+  HostGradeQuestionView,
+  HostRevealSnapshot,
+} from "@/lib/game/scoring";
 import { createClient } from "@/lib/supabase/client";
 import type { GameStatus } from "@/types/game";
 
@@ -40,6 +47,9 @@ type Props = {
   qrDataUrl: string;
   initialTeams: LobbyTeamPayload[];
   initialPlay: HostPlaySnapshot;
+  gradingQuestions: HostGradeQuestionView[];
+  revealSnapshot: HostRevealSnapshot | null;
+  scoreboard: PublicScoreboardRow[] | null;
 };
 
 const initialAction: HostPlayActionState = null;
@@ -52,6 +62,9 @@ export function HostConsole({
   qrDataUrl,
   initialTeams,
   initialPlay,
+  gradingQuestions,
+  revealSnapshot,
+  scoreboard,
 }: Props) {
   const router = useRouter();
   const [teams, setTeams] = useState(initialTeams);
@@ -328,16 +341,26 @@ export function HostConsole({
               </label>
             </fieldset>
             {Array.from({ length: questionCount }, (_, i) => (
-              <label key={i} className="flex flex-col gap-1 text-sm font-medium">
-                Question {i + 1}
-                <textarea
-                  name={`prompt${i + 1}`}
-                  required
-                  rows={2}
-                  className="rounded-lg border border-zinc-300 px-3 py-2"
-                  placeholder={`Prompt for question ${i + 1}`}
-                />
-              </label>
+              <div key={i} className="flex flex-col gap-2">
+                <label className="flex flex-col gap-1 text-sm font-medium">
+                  Question {i + 1}
+                  <textarea
+                    name={`prompt${i + 1}`}
+                    required
+                    rows={2}
+                    className="rounded-lg border border-zinc-300 px-3 py-2"
+                    placeholder={`Prompt for question ${i + 1}`}
+                  />
+                </label>
+                <label className="flex flex-col gap-1 text-sm font-medium">
+                  Correct answer (host only)
+                  <input
+                    name={`correct${i + 1}`}
+                    className="rounded-lg border border-zinc-300 px-3 py-2"
+                    placeholder="Optional — editable during review"
+                  />
+                </label>
+              </div>
             ))}
             <button
               type="submit"
@@ -430,18 +453,31 @@ export function HostConsole({
               </div>
             ) : null}
 
-            {status === "ROUND_BREAK" ? (
-              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-4 text-amber-950">
-                <p className="font-semibold">Round complete</p>
-                <p className="text-sm">
-                  Teams are on break. Grading and reveals come in a later
-                  milestone.
-                </p>
-              </div>
+            {status === "ROUND_BREAK" ||
+            status === "ROUND_REVIEW" ||
+            status === "REVEAL" ||
+            status === "RESULTS_PUBLISHED" ||
+            status === "SCOREBOARD" ? (
+              <p className="text-sm text-zinc-600">
+                Use the grading and reveal panels below.
+              </p>
             ) : null}
           </div>
         )}
       </section>
+
+      <HostGradingPanel
+        gameId={gameId}
+        status={status}
+        questions={gradingQuestions}
+      />
+
+      <HostRevealPanel
+        gameId={gameId}
+        status={status}
+        reveal={revealSnapshot}
+        scoreboard={scoreboard}
+      />
     </main>
   );
 }

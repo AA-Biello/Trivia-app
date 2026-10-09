@@ -9,7 +9,12 @@ import {
   requireHostSessionForGame,
 } from "@/lib/auth/sessions";
 import { getAppOrigin, joinUrlForCode } from "@/lib/game/app-url";
+import {
+  loadHostGradingQuestions,
+  loadHostRevealSnapshot,
+} from "@/lib/game/grade-state";
 import { loadHostPlaySnapshot } from "@/lib/game/play-state";
+import { loadPublishedScoreboard } from "@/lib/game/scoreboard-state";
 import { createAdminClient } from "@/lib/supabase/admin";
 
 type PageProps = {
@@ -66,6 +71,28 @@ export default async function HostGamePage({ params }: PageProps) {
     console.error("host lobby teams", error);
   }
 
+  const needsGrading =
+    play.status === "ROUND_BREAK" ||
+    play.status === "ROUND_REVIEW" ||
+    play.status === "REVEAL" ||
+    play.status === "RESULTS_PUBLISHED" ||
+    play.status === "SCOREBOARD";
+
+  const gradingQuestions =
+    needsGrading && play.round
+      ? await loadHostGradingQuestions(session.gameId, play.round.id)
+      : [];
+
+  const revealSnapshot =
+    play.status === "REVEAL"
+      ? await loadHostRevealSnapshot(session.gameId)
+      : null;
+
+  const scoreboard =
+    play.status === "SCOREBOARD"
+      ? await loadPublishedScoreboard(session.gameId, play.round?.id ?? null)
+      : null;
+
   const origin = await getAppOrigin();
   const joinUrl = joinUrlForCode(origin, session.joinCode);
   const qrDataUrl = await QRCode.toDataURL(joinUrl, {
@@ -84,7 +111,15 @@ export default async function HostGamePage({ params }: PageProps) {
     play.status,
     play.round?.id ?? "noround",
     play.currentQuestion?.id ?? "noq",
+    revealSnapshot?.questionId ?? "noreveal",
+    revealSnapshot?.correctAnswerRevealed ? "ca1" : "ca0",
+    revealSnapshot?.teamAnswersRevealed ? "ta1" : "ta0",
     play.submittedTeamIds.join(","),
+    gradingQuestions
+      .flatMap((q) =>
+        q.answers.map((a) => `${a.answerId}:${a.isCorrect}:${a.pointsAwarded}`),
+      )
+      .join("|"),
   ].join(":");
 
   return (
@@ -97,6 +132,9 @@ export default async function HostGamePage({ params }: PageProps) {
       qrDataUrl={qrDataUrl}
       initialTeams={initialTeams}
       initialPlay={play}
+      gradingQuestions={gradingQuestions}
+      revealSnapshot={revealSnapshot}
+      scoreboard={scoreboard}
     />
   );
 }

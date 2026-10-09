@@ -113,6 +113,10 @@ export type TeamPlayPhase =
   | "question_closed_answered"
   | "question_closed_unanswered"
   | "round_break"
+  | "round_review"
+  | "reveal"
+  | "awaiting_scoreboard"
+  | "scoreboard"
   | "other";
 
 export function resolveTeamPlayPhase(input: {
@@ -128,5 +132,11 @@ export function resolveTeamPlayPhase(input: {
     return hasAnswer ? "question_closed_answered" : "question_closed_unanswered";
   }
   if (status === "ROUND_BREAK") return "round_break";
+  if (status === "ROUND_REVIEW") return "round_review";
+  if (status === "REVEAL") return "reveal";
+  if (status === "RESULTS_PUBLISHED") return "awaiting_scoreboard";
+  if (status === "SCOREBOARD" || status === "GAME_OVER") {
+    return "scoreboard";
+  }
   return "other";
 }

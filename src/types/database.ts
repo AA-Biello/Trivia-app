@@ -79,6 +79,41 @@ export type Database = {
           },
         ];
       };
+      game_reveal_state: {
+        Row: {
+          game_id: string;
+          round_id: string;
+          current_question_id: string | null;
+          correct_answer_revealed: boolean;
+          team_answers_revealed: boolean;
+          updated_at: IsoTimestamptz;
+        };
+        Insert: {
+          game_id: string;
+          round_id: string;
+          current_question_id?: string | null;
+          correct_answer_revealed?: boolean;
+          team_answers_revealed?: boolean;
+          updated_at?: IsoTimestamptz;
+        };
+        Update: {
+          game_id?: string;
+          round_id?: string;
+          current_question_id?: string | null;
+          correct_answer_revealed?: boolean;
+          team_answers_revealed?: boolean;
+          updated_at?: IsoTimestamptz;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "game_reveal_state_game_id_fkey";
+            columns: ["game_id"];
+            isOneToOne: true;
+            referencedRelation: "games";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
       teams: {
         Row: {
           id: string;

@@ -1,6 +1,8 @@
 import "server-only";
 
+import { buildPublicRevealForGame } from "@/lib/game/grade-state";
 import type { PublicGameStatePayload } from "@/lib/game/play-channel";
+import { loadPublishedScoreboard } from "@/lib/game/scoreboard-state";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { GameStatus } from "@/types/game";
 
@@ -34,6 +36,20 @@ export type TeamPlaySnapshot = {
   myAnswer: { text: string; submittedAt: string } | null;
 };
 
+function emptyPublicState(status: GameStatus = "LOBBY"): PublicGameStatePayload {
+  return {
+    status,
+    roundId: null,
+    roundTitle: null,
+    questionId: null,
+    questionNumber: null,
+    questionCount: null,
+    prompt: null,
+    reveal: null,
+    scoreboard: null,
+  };
+}
+
 export async function loadPublicGameState(
   gameId: string,
 ): Promise<PublicGameStatePayload> {
@@ -46,16 +62,10 @@ export async function loadPublicGameState(
     .single();
 
   if (!game) {
-    return {
-      status: "LOBBY",
-      roundId: null,
-      roundTitle: null,
-      questionId: null,
-      questionNumber: null,
-      questionCount: null,
-      prompt: null,
-    };
+    return emptyPublicState();
   }
+
+  const status = game.status as GameStatus;
 
   let roundTitle: string | null = null;
   let questionCount: number | null = null;
@@ -72,16 +82,30 @@ export async function loadPublicGameState(
       .select("id", { count: "exact", head: true })
       .eq("round_id", game.current_round_id);
 
-    // Prefer the round's real question rows; fall back to planned count.
     questionCount =
       actualCount && actualCount > 0
         ? actualCount
         : (round?.planned_question_count ?? null);
   }
 
+  // During review, teams only get status + round title — no prompts/keys/grades.
+  if (status === "ROUND_REVIEW" || status === "ROUND_BREAK") {
+    return {
+      ...emptyPublicState(status),
+      roundId: game.current_round_id,
+      roundTitle,
+      questionCount,
+    };
+  }
+
   let questionNumber: number | null = null;
   let prompt: string | null = null;
-  if (game.current_question_id) {
+  let questionId: string | null = game.current_question_id;
+
+  if (
+    (status === "QUESTION_OPEN" || status === "QUESTION_CLOSED") &&
+    game.current_question_id
+  ) {
     const { data: question } = await admin
       .from("questions")
       .select("position, prompt")
@@ -89,16 +113,30 @@ export async function loadPublicGameState(
       .maybeSingle();
     questionNumber = question?.position ?? null;
     prompt = question?.prompt ?? null;
+  } else if (status !== "REVEAL") {
+    questionId = null;
   }
 
+  const reveal =
+    status === "REVEAL" ? await buildPublicRevealForGame(gameId) : null;
+
+  const scoreboard =
+    status === "SCOREBOARD" || status === "GAME_OVER"
+      ? await loadPublishedScoreboard(gameId, game.current_round_id)
+      : null;
+
   return {
-    status: game.status as GameStatus,
+    status,
     roundId: game.current_round_id,
     roundTitle,
-    questionId: game.current_question_id,
-    questionNumber,
-    questionCount,
-    prompt,
+    questionId: status === "REVEAL" ? (reveal?.questionId ?? null) : questionId,
+    questionNumber:
+      status === "REVEAL" ? (reveal?.questionNumber ?? null) : questionNumber,
+    questionCount:
+      status === "REVEAL" ? (reveal?.questionCount ?? questionCount) : questionCount,
+    prompt: status === "REVEAL" ? (reveal?.prompt ?? null) : prompt,
+    reveal,
+    scoreboard,
   };
 }
 
@@ -195,11 +233,17 @@ export async function loadTeamPlaySnapshot(
   const admin = createAdminClient();
 
   let myAnswer: TeamPlaySnapshot["myAnswer"] = null;
-  if (publicState.questionId) {
+  const answerQuestionId =
+    publicState.status === "QUESTION_OPEN" ||
+    publicState.status === "QUESTION_CLOSED"
+      ? publicState.questionId
+      : null;
+
+  if (answerQuestionId) {
     const { data: answer } = await admin
       .from("answers")
       .select("answer_text, submitted_at")
-      .eq("question_id", publicState.questionId)
+      .eq("question_id", answerQuestionId)
       .eq("team_id", teamId)
       .maybeSingle();
 

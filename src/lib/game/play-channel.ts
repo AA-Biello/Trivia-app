@@ -1,6 +1,6 @@
 import type { GameStatus } from "@/types/game";
 
-/** Broadcast topic for live question flow (no DB table subscriptions). */
+/** Broadcast topic for live question / reveal / scoreboard flow. */
 export function playChannelName(gameId: string): string {
   return `play:${gameId}`;
 }
@@ -8,7 +8,33 @@ export function playChannelName(gameId: string): string {
 export const GAME_STATE_EVENT = "game_state";
 export const ANSWER_PROGRESS_EVENT = "answer_progress";
 
-/** Public snapshot safe for team clients — never includes grades/keys. */
+export type PublicRevealView = {
+  questionId: string;
+  questionNumber: number;
+  questionCount: number;
+  prompt: string;
+  /** Null until host reveals the correct answer for this question. */
+  correctAnswer: string | null;
+  /** Null until host reveals team answers for this question. */
+  teamAnswers: Array<{
+    teamName: string;
+    answerText: string;
+    isCorrect: boolean | null;
+    pointsAwarded: number;
+  }> | null;
+};
+
+export type PublicScoreboardRow = {
+  teamName: string;
+  roundPoints: number;
+  totalPoints: number;
+  rank: number;
+};
+
+/**
+ * Public snapshot safe for team clients.
+ * Never includes unrevealed secrets/grades. Scoreboard only after publish.
+ */
 export type PublicGameStatePayload = {
   status: GameStatus;
   roundId: string | null;
@@ -17,6 +43,8 @@ export type PublicGameStatePayload = {
   questionNumber: number | null;
   questionCount: number | null;
   prompt: string | null;
+  reveal: PublicRevealView | null;
+  scoreboard: PublicScoreboardRow[] | null;
 };
 
 /** Host progress ping — team identity only, never answer text. */

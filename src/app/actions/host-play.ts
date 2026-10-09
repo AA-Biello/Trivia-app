@@ -51,12 +51,14 @@ export async function createRoundAction(
   }
 
   const prompts: string[] = [];
+  const correctAnswers: string[] = [];
   for (let i = 1; i <= questionCount; i += 1) {
     const prompt = String(formData.get(`prompt${i}`) ?? "").trim();
     if (!prompt) {
       return { error: `Enter a prompt for question ${i}.` };
     }
     prompts.push(prompt);
+    correctAnswers.push(String(formData.get(`correct${i}`) ?? "").trim());
   }
 
   const admin = createAdminClient();
@@ -96,20 +98,38 @@ export async function createRoundAction(
     return { error: "Could not create the round." };
   }
 
-  const { error: questionsError } = await admin.from("questions").insert(
-    prompts.map((prompt, index) => ({
-      game_id: gameId,
-      round_id: round.id,
-      position: index + 1,
-      prompt,
-      point_value: 1,
-    })),
-  );
+  const questionRows = prompts.map((prompt, index) => ({
+    game_id: gameId,
+    round_id: round.id,
+    position: index + 1,
+    prompt,
+    point_value: 1,
+  }));
 
-  if (questionsError) {
+  const { data: insertedQuestions, error: questionsError } = await admin
+    .from("questions")
+    .insert(questionRows)
+    .select("id, position");
+
+  if (questionsError || !insertedQuestions) {
     await admin.from("rounds").delete().eq("id", round.id);
     console.error("createRound questions", questionsError);
     return { error: "Could not save questions." };
+  }
+
+  const secretRows = insertedQuestions.map((question) => ({
+    question_id: question.id,
+    correct_answer: correctAnswers[question.position - 1] ?? "",
+  }));
+
+  const { error: secretsError } = await admin
+    .from("question_secrets")
+    .insert(secretRows);
+
+  if (secretsError) {
+    await admin.from("rounds").delete().eq("id", round.id);
+    console.error("createRound secrets", secretsError);
+    return { error: "Could not save correct answers." };
   }
 
   await admin
