@@ -19,7 +19,10 @@ export type HostFinalSnapshot = {
   prompt: string;
   correctAnswer: string;
   maxWager: number;
-  /** Teams that locked both answer and wager. */
+  /** Teams that have submitted both answer and wager (editable until host closes). */
+  submittedTeamIds: string[];
+  submittedTeamNames: string[];
+  /** Teams whose answer+wager are locked (after host enters FINAL_REVIEW). */
   lockedTeamIds: string[];
   lockedTeamNames: string[];
   reviewRows: HostFinalReviewRow[];

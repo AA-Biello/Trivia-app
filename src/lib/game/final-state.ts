@@ -87,14 +87,20 @@ export async function loadHostFinalSnapshot(
   const answerByTeam = new Map((answers ?? []).map((a) => [a.team_id, a]));
   const gradeByAnswer = new Map((grades ?? []).map((g) => [g.answer_id, g]));
 
+  const submittedTeamIds: string[] = [];
+  const submittedTeamNames: string[] = [];
   const lockedTeamIds: string[] = [];
   const lockedTeamNames: string[] = [];
   for (const team of teams ?? []) {
     const wager = wagerByTeam.get(team.id);
     const answer = answerByTeam.get(team.id);
-    if (wager?.locked_at && answer) {
-      lockedTeamIds.push(team.id);
-      lockedTeamNames.push(team.name);
+    if (wager && answer) {
+      submittedTeamIds.push(team.id);
+      submittedTeamNames.push(team.name);
+      if (wager.locked_at) {
+        lockedTeamIds.push(team.id);
+        lockedTeamNames.push(team.name);
+      }
     }
   }
 
@@ -139,6 +145,8 @@ export async function loadHostFinalSnapshot(
     prompt: question.prompt,
     correctAnswer: secret?.correct_answer ?? "",
     maxWager: round.max_wager ?? 0,
+    submittedTeamIds,
+    submittedTeamNames,
     lockedTeamIds,
     lockedTeamNames,
     reviewRows,

@@ -64,9 +64,9 @@ export function HostFinalPanel({
           Start final wager
         </h2>
         <p className="text-sm text-zinc-600">
-          Optional and explicit — teams will see the final question and lock
-          their answer and wager together. Cumulative scores are used as the
-          starting total.
+          Optional and explicit — teams will see the final question and can
+          submit or change their answer and wager until you close grading.
+          Cumulative scores are used as the starting total.
         </p>
         {error ? (
           <p className="text-sm text-red-700" role="alert">
@@ -156,18 +156,37 @@ export function HostFinalPanel({
       {status === "FINAL_QUESTION" && finalSnapshot ? (
         <div className="flex flex-col gap-3">
           <p className="text-sm text-zinc-700">
-            Locked final responses:{" "}
+            Submitted final responses:{" "}
             <span className="font-semibold">
-              {finalSnapshot.lockedTeamIds.length} / {teamCount}
+              {finalSnapshot.submittedTeamIds.length} / {teamCount}
             </span>
           </p>
-          {finalSnapshot.lockedTeamNames.length > 0 ? (
+          {finalSnapshot.submittedTeamNames.length > 0 ? (
             <p className="text-sm text-zinc-600">
-              Locked: {finalSnapshot.lockedTeamNames.join(", ")}
+              In: {finalSnapshot.submittedTeamNames.join(", ")}
             </p>
           ) : (
-            <p className="text-sm text-zinc-500">No teams locked yet</p>
+            <p className="text-sm text-zinc-500">No responses yet</p>
           )}
+
+          <ul className="flex flex-col gap-3">
+            {finalSnapshot.reviewRows.map((row) => (
+              <li
+                key={row.teamId}
+                className="rounded-lg border border-zinc-200 p-3"
+              >
+                <p className="font-medium text-zinc-900">{row.teamName}</p>
+                <p className="text-sm text-zinc-600">
+                  Starting {row.startingScore} · Wager{" "}
+                  {row.wagerAmount ?? "—"}
+                </p>
+                <p className="mt-1 whitespace-pre-wrap text-zinc-800">
+                  {row.answerText ?? "(no answer yet)"}
+                </p>
+              </li>
+            ))}
+          </ul>
+
           <form
             action={async (fd) => {
               await reviewAction(fd);
@@ -190,7 +209,7 @@ export function HostFinalPanel({
         <div className="flex flex-col gap-4">
           <p className="text-sm text-zinc-600">
             No answer counts as incorrect on publish. Teams cannot see grades
-            yet.
+            or final standings until you publish.
           </p>
           <ul className="flex flex-col gap-3">
             {finalSnapshot.reviewRows.map((row) => (

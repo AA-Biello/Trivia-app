@@ -17,6 +17,7 @@ import {
   loadHostGradingQuestions,
   loadHostRevealSnapshot,
 } from "@/lib/game/grade-state";
+import { loadHostRunningScoreboard } from "@/lib/game/host-scoreboard";
 import { loadHostPlaySnapshot } from "@/lib/game/play-state";
 import { loadHostRoundList } from "@/lib/game/round-state";
 import { loadPublishedScoreboard } from "@/lib/game/scoreboard-state";
@@ -112,6 +113,8 @@ export default async function HostGamePage({ params }: PageProps) {
       ? await loadPublishedFinalResults(session.gameId)
       : null;
 
+  const runningScoreboard = await loadHostRunningScoreboard(session.gameId);
+
   const origin = await getAppOrigin();
   const joinUrl = joinUrlForCode(origin, session.joinCode);
   const qrDataUrl = await QRCode.toDataURL(joinUrl, {
@@ -131,8 +134,14 @@ export default async function HostGamePage({ params }: PageProps) {
     play.round?.id ?? "noround",
     play.currentQuestion?.id ?? "noq",
     rounds.map((r) => `${r.id}:${r.status}`).join("|"),
-    finalSnapshot?.lockedTeamIds.join(",") ?? "",
+    finalSnapshot?.submittedTeamIds.join(",") ?? "",
+    finalSnapshot?.reviewRows
+      .map((r) => `${r.teamId}:${r.answerText ?? ""}:${r.wagerAmount ?? ""}`)
+      .join("|") ?? "",
     play.submittedTeamIds.join(","),
+    runningScoreboard
+      .map((r) => `${r.teamId}:${r.totalPoints}:${r.projectedFinalPoints ?? ""}`)
+      .join("|"),
   ].join(":");
 
   return (
@@ -148,6 +157,7 @@ export default async function HostGamePage({ params }: PageProps) {
       gradingQuestions={gradingQuestions}
       revealSnapshot={revealSnapshot}
       scoreboard={scoreboard}
+      runningScoreboard={runningScoreboard}
       finalSnapshot={finalSnapshot}
       finalResults={finalResults}
       rounds={rounds}

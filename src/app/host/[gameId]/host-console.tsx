@@ -13,10 +13,14 @@ import { HostFinalPanel } from "@/app/host/[gameId]/host-final-panel";
 import { HostGradingPanel } from "@/app/host/[gameId]/host-grading-panel";
 import { HostRevealPanel } from "@/app/host/[gameId]/host-reveal-panel";
 import { HostRoundList } from "@/app/host/[gameId]/host-round-list";
+import { HostRunningScoreboard } from "@/app/host/[gameId]/host-running-scoreboard";
+import { HostTeamsPanel } from "@/app/host/[gameId]/host-teams-panel";
 import {
   LOBBY_TEAM_JOINED_EVENT,
+  LOBBY_TEAM_REMOVED_EVENT,
   lobbyChannelName,
   type LobbyTeamPayload,
+  type LobbyTeamRemovedPayload,
 } from "@/lib/game/lobby-channel";
 import {
   ANSWER_PROGRESS_EVENT,
@@ -29,6 +33,7 @@ import {
   type PublicScoreboardRow,
   type WagerProgressPayload,
 } from "@/lib/game/play-channel";
+import type { HostRunningScoreRow } from "@/lib/game/host-scoreboard";
 import {
   formatQuestionProgress,
   nextStepAfterClose,
@@ -54,6 +59,7 @@ type Props = {
   gradingQuestions: HostGradeQuestionView[];
   revealSnapshot: HostRevealSnapshot | null;
   scoreboard: PublicScoreboardRow[] | null;
+  runningScoreboard: HostRunningScoreRow[];
   finalSnapshot: HostFinalSnapshot | null;
   finalResults: PublicFinalResultsRow[] | null;
   rounds: HostRoundListItem[];
@@ -72,6 +78,7 @@ export function HostConsole({
   gradingQuestions,
   revealSnapshot,
   scoreboard,
+  runningScoreboard,
   finalSnapshot,
   finalResults,
   rounds,
@@ -86,16 +93,26 @@ export function HostConsole({
   const [submittedNames, setSubmittedNames] = useState(
     initialPlay.submittedTeamNames,
   );
-  const [lockedFinalIds, setLockedFinalIds] = useState(
-    () => new Set(finalSnapshot?.lockedTeamIds ?? []),
+  const [finalSubmittedIds, setFinalSubmittedIds] = useState(
+    () => new Set(finalSnapshot?.submittedTeamIds ?? []),
   );
   const currentQuestionIdRef = useRef(initialPlay.currentQuestion?.id);
+  const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     currentQuestionIdRef.current = play.currentQuestion?.id;
   }, [play.currentQuestion?.id]);
 
   useEffect(() => {
+    const scheduleRefresh = () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
+      refreshTimerRef.current = setTimeout(() => {
+        router.refresh();
+      }, 250);
+    };
+
     const supabase = createClient();
     const lobby = supabase
       .channel(lobbyChannelName(gameId))
@@ -113,6 +130,16 @@ export function HostConsole({
           });
         },
       )
+      .on(
+        "broadcast",
+        { event: LOBBY_TEAM_REMOVED_EVENT },
+        ({ payload }) => {
+          const removed = payload as LobbyTeamRemovedPayload;
+          if (!removed?.id) return;
+          setTeams((current) => current.filter((row) => row.id !== removed.id));
+          scheduleRefresh();
+        },
+      )
       .subscribe();
 
     const playChannel = supabase
@@ -126,7 +153,7 @@ export function HostConsole({
         if (questionChanged) {
           setSubmittedIds(new Set());
           setSubmittedNames([]);
-          setLockedFinalIds(new Set());
+          setFinalSubmittedIds(new Set());
         }
         setPlay((current) => ({
           ...current,
@@ -161,32 +188,35 @@ export function HostConsole({
             ? current
             : [...current, progress.teamName],
         );
-        if (status === "FINAL_QUESTION" || play.status === "FINAL_QUESTION") {
-          setLockedFinalIds((current) => {
-            if (current.has(progress.teamId)) return current;
-            const next = new Set(current);
-            next.add(progress.teamId);
-            return next;
-          });
-        }
-      })
-      .on("broadcast", { event: WAGER_PROGRESS_EVENT }, ({ payload }) => {
-        const progress = payload as WagerProgressPayload;
-        if (!progress?.teamId) return;
-        setLockedFinalIds((current) => {
+        setFinalSubmittedIds((current) => {
           if (current.has(progress.teamId)) return current;
           const next = new Set(current);
           next.add(progress.teamId);
           return next;
         });
+        scheduleRefresh();
+      })
+      .on("broadcast", { event: WAGER_PROGRESS_EVENT }, ({ payload }) => {
+        const progress = payload as WagerProgressPayload;
+        if (!progress?.teamId) return;
+        setFinalSubmittedIds((current) => {
+          if (current.has(progress.teamId)) return current;
+          const next = new Set(current);
+          next.add(progress.teamId);
+          return next;
+        });
+        scheduleRefresh();
       })
       .subscribe();
 
     return () => {
+      if (refreshTimerRef.current) {
+        clearTimeout(refreshTimerRef.current);
+      }
       void supabase.removeChannel(lobby);
       void supabase.removeChannel(playChannel);
     };
-  }, [gameId, router, status, play.status]);
+  }, [gameId, router]);
 
   const [openState, openAction, openPending] = useActionState(
     openQuestionAction,
@@ -221,6 +251,7 @@ export function HostConsole({
 
   const hasFinalRound = rounds.some((r) => r.isFinal);
   const showFinalSetup = status === "SCOREBOARD" && !hasFinalRound;
+  const showProjected = status === "FINAL_REVIEW";
 
   return (
     <main className="mx-auto flex w-full max-w-3xl flex-1 flex-col gap-10 px-6 py-12">
@@ -272,6 +303,11 @@ export function HostConsole({
         </div>
       </section>
 
+      <HostRunningScoreboard
+        rows={runningScoreboard}
+        showProjected={showProjected}
+      />
+
       <section className="flex flex-col gap-3">
         <h2 className="text-lg font-semibold text-zinc-900">Teams</h2>
         {teams.length === 0 ? (
@@ -286,9 +322,10 @@ export function HostConsole({
                 className="flex items-center justify-between px-4 py-3 text-zinc-900"
               >
                 <span className="font-medium">{team.name}</span>
-                {status === "FINAL_QUESTION" && lockedFinalIds.has(team.id) ? (
+                {status === "FINAL_QUESTION" &&
+                finalSubmittedIds.has(team.id) ? (
                   <span className="text-xs font-medium text-emerald-700">
-                    Final locked
+                    Final submitted
                   </span>
                 ) : current && submittedIds.has(team.id) ? (
                   <span className="text-xs font-medium text-emerald-700">
@@ -304,6 +341,8 @@ export function HostConsole({
           </ul>
         )}
       </section>
+
+      <HostTeamsPanel gameId={gameId} teams={teams} />
 
       <HostRoundList
         gameId={gameId}
@@ -402,10 +441,11 @@ export function HostConsole({
 
             {status === "FINAL_QUESTION" && finalSnapshot ? (
               <p className="text-sm text-zinc-700">
-                Final responses locked:{" "}
+                Final responses submitted:{" "}
                 <span className="font-semibold">
-                  {lockedFinalIds.size || finalSnapshot.lockedTeamIds.length} /{" "}
-                  {teams.length || play.teamCount}
+                  {finalSubmittedIds.size ||
+                    finalSnapshot.submittedTeamIds.length}{" "}
+                  / {teams.length || play.teamCount}
                 </span>
               </p>
             ) : null}

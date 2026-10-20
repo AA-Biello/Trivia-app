@@ -24,6 +24,7 @@ export type SubmitAnswerState = {
   error?: string;
   ok?: boolean;
   answerText?: string;
+  updated?: boolean;
 } | null;
 
 export type SubmitFinalResponseState = {
@@ -31,6 +32,7 @@ export type SubmitFinalResponseState = {
   ok?: boolean;
   answerText?: string;
   amount?: number;
+  updated?: boolean;
 } | null;
 
 export async function submitAnswerAction(
@@ -42,7 +44,7 @@ export async function submitAnswerAction(
   const answerText = String(formData.get("answerText") ?? "").trim();
 
   if (!answerText) {
-    return { error: "Enter an answer before locking in." };
+    return { error: "Enter an answer before submitting." };
   }
   if (answerText.length > 500) {
     return { error: "Keep your answer under 500 characters." };
@@ -83,23 +85,60 @@ export async function submitAnswerAction(
     return { error: "Question not found." };
   }
 
-  const { error: insertError } = await admin.from("answers").insert({
-    game_id: gameId,
-    question_id: questionId,
-    team_id: teamId,
-    answer_text: answerText,
-    locked_at: new Date().toISOString(),
-  });
+  const { data: existing } = await admin
+    .from("answers")
+    .select("id, locked_at")
+    .eq("question_id", questionId)
+    .eq("team_id", teamId)
+    .maybeSingle();
 
-  if (insertError) {
-    if (isUniqueViolation(insertError)) {
-      return { error: "Your team already locked in an answer." };
+  if (existing?.locked_at) {
+    return { error: "This answer is locked and can no longer be changed." };
+  }
+
+  let updated = false;
+  if (existing) {
+    const { error: updateError } = await admin
+      .from("answers")
+      .update({ answer_text: answerText })
+      .eq("id", existing.id);
+    if (updateError) {
+      if (updateError.message?.includes("locked")) {
+        return { error: "This answer is locked and can no longer be changed." };
+      }
+      console.error("submitAnswer update", updateError);
+      return { error: "Could not update your answer. Try again." };
     }
-    if (insertError.message?.includes("submissions not allowed")) {
-      return { error: "Submissions are closed for this question." };
+    updated = true;
+  } else {
+    const { error: insertError } = await admin.from("answers").insert({
+      game_id: gameId,
+      question_id: questionId,
+      team_id: teamId,
+      answer_text: answerText,
+      locked_at: null,
+    });
+
+    if (insertError) {
+      if (isUniqueViolation(insertError)) {
+        // Race: retry as update.
+        const { error: retryError } = await admin
+          .from("answers")
+          .update({ answer_text: answerText })
+          .eq("question_id", questionId)
+          .eq("team_id", teamId)
+          .is("locked_at", null);
+        if (retryError) {
+          return { error: "Could not save your answer. Try again." };
+        }
+        updated = true;
+      } else if (insertError.message?.includes("submissions not allowed")) {
+        return { error: "Submissions are closed for this question." };
+      } else {
+        console.error("submitAnswer insert", insertError);
+        return { error: "Could not submit your answer. Try again." };
+      }
     }
-    console.error("submitAnswer", insertError);
-    return { error: "Could not submit your answer. Try again." };
   }
 
   const { count } = await admin
@@ -120,12 +159,12 @@ export async function submitAnswerAction(
 
   revalidatePath(`/game/${gameId}`);
   revalidatePath(`/host/${gameId}`);
-  return { ok: true, answerText };
+  return { ok: true, answerText, updated };
 }
 
 /**
- * Lock final answer + wager together during FINAL_QUESTION.
- * Both become immutable after a successful submit.
+ * Submit or update final answer + wager while FINAL_QUESTION is open.
+ * Remains editable until the host closes into FINAL_REVIEW.
  */
 export async function submitFinalResponseAction(
   _prev: SubmitFinalResponseState,
@@ -137,7 +176,7 @@ export async function submitFinalResponseAction(
   const amount = parseWagerAmount(formData.get("amount"));
 
   if (!answerText) {
-    return { error: "Enter an answer before locking in." };
+    return { error: "Enter an answer before submitting." };
   }
   if (answerText.length > 500) {
     return { error: "Keep your answer under 500 characters." };
@@ -191,70 +230,100 @@ export async function submitFinalResponseAction(
     return { error: validation.error };
   }
 
-  // Reject if either already exists (partial prior attempt).
   const [{ data: existingAnswer }, { data: existingWager }] = await Promise.all([
     admin
       .from("answers")
-      .select("id")
+      .select("id, locked_at")
       .eq("question_id", questionId)
       .eq("team_id", teamId)
       .maybeSingle(),
     admin
       .from("wagers")
-      .select("id")
+      .select("id, locked_at")
       .eq("question_id", questionId)
       .eq("team_id", teamId)
       .maybeSingle(),
   ]);
 
-  if (existingAnswer || existingWager) {
-    return { error: "Your team already locked in a final response." };
+  if (existingAnswer?.locked_at || existingWager?.locked_at) {
+    return { error: "Your final response is locked and can no longer be changed." };
   }
 
-  const now = new Date().toISOString();
+  const updated = Boolean(existingAnswer || existingWager);
 
-  const { error: wagerError } = await admin.from("wagers").insert({
-    game_id: gameId,
-    question_id: questionId,
-    team_id: teamId,
-    amount: validation.amount,
-    locked_at: now,
-  });
-
-  if (wagerError) {
-    if (isUniqueViolation(wagerError)) {
-      return { error: "Your team already locked in a final response." };
-    }
-    if (
-      wagerError.message?.includes("FINAL_QUESTION") ||
-      wagerError.message?.includes("WAGER_OPEN")
-    ) {
-      return { error: "Final responses are closed." };
-    }
-    console.error("submitFinalResponse wager", wagerError);
-    return { error: "Could not lock your final response. Try again." };
-  }
-
-  const { error: answerError } = await admin.from("answers").insert({
-    game_id: gameId,
-    question_id: questionId,
-    team_id: teamId,
-    answer_text: answerText,
-    locked_at: now,
-  });
-
-  if (answerError) {
-    // Best-effort rollback of the wager so the team can retry both.
-    await admin
+  if (existingWager) {
+    const { error: wagerError } = await admin
       .from("wagers")
-      .delete()
-      .eq("question_id", questionId)
-      .eq("team_id", teamId);
-    if (isUniqueViolation(answerError)) {
-      return { error: "Your team already locked in a final response." };
+      .update({ amount: validation.amount })
+      .eq("id", existingWager.id);
+    if (wagerError) {
+      console.error("submitFinalResponse wager update", wagerError);
+      return { error: "Could not update your wager. Try again." };
     }
-    console.error("submitFinalResponse answer", answerError);
-    return { error: "Could not lock your final response. Try again." };
+  } else {
+    const { error: wagerError } = await admin.from("wagers").insert({
+      game_id: gameId,
+      question_id: questionId,
+      team_id: teamId,
+      amount: validation.amount,
+      locked_at: null,
+    });
+    if (wagerError) {
+      if (isUniqueViolation(wagerError)) {
+        const { error: retry } = await admin
+          .from("wagers")
+          .update({ amount: validation.amount })
+          .eq("question_id", questionId)
+          .eq("team_id", teamId)
+          .is("locked_at", null);
+        if (retry) {
+          return { error: "Could not save your wager. Try again." };
+        }
+      } else if (
+        wagerError.message?.includes("FINAL_QUESTION") ||
+        wagerError.message?.includes("WAGER_OPEN")
+      ) {
+        return { error: "Final responses are closed." };
+      } else {
+        console.error("submitFinalResponse wager insert", wagerError);
+        return { error: "Could not save your final response. Try again." };
+      }
+    }
+  }
+
+  if (existingAnswer) {
+    const { error: answerError } = await admin
+      .from("answers")
+      .update({ answer_text: answerText })
+      .eq("id", existingAnswer.id);
+    if (answerError) {
+      console.error("submitFinalResponse answer update", answerError);
+      return { error: "Could not update your answer. Try again." };
+    }
+  } else {
+    const { error: answerError } = await admin.from("answers").insert({
+      game_id: gameId,
+      question_id: questionId,
+      team_id: teamId,
+      answer_text: answerText,
+      locked_at: null,
+    });
+    if (answerError) {
+      if (isUniqueViolation(answerError)) {
+        const { error: retry } = await admin
+          .from("answers")
+          .update({ answer_text: answerText })
+          .eq("question_id", questionId)
+          .eq("team_id", teamId)
+          .is("locked_at", null);
+        if (retry) {
+          return { error: "Could not save your answer. Try again." };
+        }
+      } else {
+        console.error("submitFinalResponse answer insert", answerError);
+        return { error: "Could not save your final response. Try again." };
+      }
+    }
   }
 
   const [{ count: answerCount }, { count: wagerCount }] = await Promise.all([
@@ -268,19 +337,18 @@ export async function submitFinalResponseAction(
       .eq("question_id", questionId),
   ]);
 
-  // Locked progress = teams with both; approximate with min for host ping.
-  const lockedCount = Math.min(answerCount ?? 0, wagerCount ?? 0);
+  const submittedCount = Math.min(answerCount ?? 0, wagerCount ?? 0);
 
   try {
     await broadcastWagerProgress(gameId, {
       questionId,
-      wageredCount: lockedCount,
+      wageredCount: submittedCount,
       teamId,
       teamName: session.teamName,
     });
     await broadcastAnswerProgress(gameId, {
       questionId,
-      submittedCount: lockedCount,
+      submittedCount,
       teamId,
       teamName: session.teamName,
     });
@@ -290,5 +358,5 @@ export async function submitFinalResponseAction(
 
   revalidatePath(`/game/${gameId}`);
   revalidatePath(`/host/${gameId}`);
-  return { ok: true, answerText, amount: validation.amount };
+  return { ok: true, answerText, amount: validation.amount, updated };
 }

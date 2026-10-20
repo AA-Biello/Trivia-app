@@ -33,8 +33,9 @@ const initialFinal: SubmitFinalResponseState = null;
 export function TeamPlayClient({ gameId, initial }: Props) {
   const router = useRouter();
   const [publicState, setPublicState] = useState(initial.publicState);
-  const [myAnswer, setMyAnswer] = useState(initial.myAnswer);
-  const myWager = initial.myWager;
+  const [clearedForQuestionId, setClearedForQuestionId] = useState<
+    string | null
+  >(null);
   const myScore = initial.myScore;
   const questionIdRef = useRef(initial.publicState.questionId);
   const [submitState, submitAction, pending] = useActionState(
@@ -46,8 +47,12 @@ export function TeamPlayClient({ gameId, initial }: Props) {
     initialFinal,
   );
 
+  const questionCleared =
+    clearedForQuestionId != null &&
+    clearedForQuestionId === publicState.questionId;
+
   const effectiveAnswer =
-    myAnswer ??
+    (!questionCleared ? initial.myAnswer : null) ??
     (submitState?.ok && submitState.answerText
       ? { text: submitState.answerText, submittedAt: "" }
       : null) ??
@@ -56,9 +61,9 @@ export function TeamPlayClient({ gameId, initial }: Props) {
       : null);
 
   const effectiveWager =
-    myWager ??
+    (!questionCleared ? initial.myWager : null) ??
     (finalState?.ok && finalState.amount != null
-      ? { amount: finalState.amount, lockedAt: "" }
+      ? { amount: finalState.amount, lockedAt: null }
       : null);
 
   useEffect(() => {
@@ -75,7 +80,7 @@ export function TeamPlayClient({ gameId, initial }: Props) {
         const questionChanged = state.questionId !== questionIdRef.current;
         setPublicState(state);
         if (questionChanged) {
-          setMyAnswer(null);
+          setClearedForQuestionId(state.questionId ?? "none");
         }
         router.refresh();
       })
@@ -95,6 +100,11 @@ export function TeamPlayClient({ gameId, initial }: Props) {
   const reveal = publicState.reveal;
   const configuredMaxWager = publicState.maxWager ?? 0;
   const teamEffectiveMax = effectiveMaxWager(configuredMaxWager, myScore);
+  const questionOpenEditable =
+    phase === "question_open_unanswered" || phase === "question_open_answered";
+  const finalOpenEditable =
+    phase === "final_question_unanswered" ||
+    phase === "final_question_answered";
 
   return (
     <main className="mx-auto flex w-full max-w-lg flex-1 flex-col gap-8 px-6 py-16">
@@ -121,7 +131,7 @@ export function TeamPlayClient({ gameId, initial }: Props) {
         </div>
       ) : null}
 
-      {phase === "question_open_unanswered" && publicState.questionId ? (
+      {questionOpenEditable && publicState.questionId ? (
         <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
           <p className="text-sm font-medium text-zinc-500">
             {publicState.questionNumber != null &&
@@ -145,10 +155,12 @@ export function TeamPlayClient({ gameId, initial }: Props) {
             <label className="flex flex-col gap-1 text-sm font-medium text-zinc-800">
               Your answer
               <textarea
+                key={`answer-${publicState.questionId}-${effectiveAnswer?.text ?? "empty"}`}
                 name="answerText"
                 required
                 rows={4}
                 maxLength={500}
+                defaultValue={effectiveAnswer?.text ?? ""}
                 className="rounded-lg border border-zinc-300 px-3 py-2 text-base"
                 placeholder="Type your team’s answer"
               />
@@ -158,19 +170,29 @@ export function TeamPlayClient({ gameId, initial }: Props) {
                 {submitState.error}
               </p>
             ) : null}
+            {submitState?.ok ? (
+              <p className="text-sm text-emerald-800">
+                {submitState.updated
+                  ? "Answer updated. You can change it until the host closes."
+                  : "Answer saved. You can change it until the host closes."}
+              </p>
+            ) : null}
             <button
               type="submit"
               disabled={pending}
               className="rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {pending ? "Locking in…" : "Lock in answer"}
+              {pending
+                ? "Saving…"
+                : effectiveAnswer
+                  ? "Update answer"
+                  : "Submit answer"}
             </button>
           </form>
         </div>
       ) : null}
 
-      {phase === "question_open_answered" ||
-      phase === "question_closed_answered" ? (
+      {phase === "question_closed_answered" ? (
         <div className="flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 px-5 py-6">
           <p className="text-sm font-medium text-emerald-900">
             {publicState.questionNumber != null &&
@@ -189,7 +211,7 @@ export function TeamPlayClient({ gameId, initial }: Props) {
             <p className="mt-1 whitespace-pre-wrap">{effectiveAnswer?.text}</p>
           </div>
           <p className="text-lg font-semibold text-emerald-900">
-            Answer locked in
+            Question closed
           </p>
           <p className="text-zinc-600">Waiting for the next question</p>
         </div>
@@ -325,7 +347,7 @@ export function TeamPlayClient({ gameId, initial }: Props) {
         </div>
       ) : null}
 
-      {phase === "final_question_unanswered" && publicState.questionId ? (
+      {finalOpenEditable && publicState.questionId ? (
         <div className="flex flex-col gap-4 rounded-xl border border-zinc-200 bg-white p-5 shadow-sm">
           <p className="text-sm font-medium text-zinc-500">Final question</p>
           <p className="text-xl font-semibold text-zinc-900">
@@ -354,10 +376,12 @@ export function TeamPlayClient({ gameId, initial }: Props) {
             <label className="flex flex-col gap-1 text-sm font-medium text-zinc-800">
               Answer
               <textarea
+                key={`final-answer-${publicState.questionId}-${effectiveAnswer?.text ?? "empty"}`}
                 name="answerText"
                 required
                 rows={4}
                 maxLength={500}
+                defaultValue={effectiveAnswer?.text ?? ""}
                 className="rounded-lg border border-zinc-300 px-3 py-2 text-base"
                 placeholder="Type your final answer"
               />
@@ -365,12 +389,14 @@ export function TeamPlayClient({ gameId, initial }: Props) {
             <label className="flex flex-col gap-1 text-sm font-medium text-zinc-800">
               Wager
               <input
+                key={`final-wager-${publicState.questionId}-${effectiveWager?.amount ?? "empty"}`}
                 name="amount"
                 type="number"
                 min={0}
                 max={teamEffectiveMax}
                 step={1}
                 required
+                defaultValue={effectiveWager?.amount ?? ""}
                 className="rounded-lg border border-zinc-300 px-3 py-2"
                 placeholder="0"
               />
@@ -380,39 +406,25 @@ export function TeamPlayClient({ gameId, initial }: Props) {
                 {finalState.error}
               </p>
             ) : null}
+            {finalState?.ok ? (
+              <p className="text-sm text-emerald-800">
+                {finalState.updated
+                  ? "Updated. You can change this until the host closes grading."
+                  : "Saved. You can change this until the host closes grading."}
+              </p>
+            ) : null}
             <button
               type="submit"
               disabled={finalPending}
               className="rounded-lg bg-zinc-900 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
             >
-              {finalPending ? "Locking…" : "Lock answer & wager"}
+              {finalPending
+                ? "Saving…"
+                : effectiveAnswer && effectiveWager
+                  ? "Update answer & wager"
+                  : "Submit answer & wager"}
             </button>
           </form>
-        </div>
-      ) : null}
-
-      {phase === "final_question_answered" ? (
-        <div className="flex flex-col gap-3 rounded-xl border border-emerald-200 bg-emerald-50/60 px-5 py-6">
-          <p className="text-sm font-medium text-emerald-900">Final question</p>
-          <p className="font-semibold text-zinc-900">{publicState.prompt}</p>
-          <div className="rounded-lg bg-white px-4 py-3 text-zinc-800">
-            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Your answer
-            </p>
-            <p className="mt-1 whitespace-pre-wrap">{effectiveAnswer?.text}</p>
-          </div>
-          <div className="rounded-lg bg-white px-4 py-3 text-zinc-800">
-            <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-              Your wager
-            </p>
-            <p className="mt-1 text-lg font-semibold">
-              {effectiveWager?.amount ?? 0}
-            </p>
-          </div>
-          <p className="text-lg font-semibold text-emerald-900">
-            Final answer locked
-          </p>
-          <p className="text-zinc-600">Waiting for the host…</p>
         </div>
       ) : null}
 

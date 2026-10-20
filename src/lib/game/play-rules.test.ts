@@ -30,12 +30,22 @@ describe("team can submit while question is open", () => {
   });
 });
 
-describe("duplicate submit rejected", () => {
-  it("models one-answer-per-team via answered phase (unique constraint enforced in DB)", () => {
+describe("answer remains editable while question is open", () => {
+  it("keeps an answered team in the open answered phase until the host closes", () => {
     assert.equal(
       resolveTeamPlayPhase({ status: "QUESTION_OPEN", hasAnswer: true }),
       "question_open_answered",
     );
+    assert.equal(
+      resolveTeamPlayPhase({
+        status: "FINAL_QUESTION",
+        hasAnswer: true,
+        hasWager: true,
+      }),
+      "final_question_answered",
+    );
+    assert.equal(canSubmitAnswer("QUESTION_OPEN"), true);
+    assert.equal(canSubmitAnswer("QUESTION_CLOSED"), false);
   });
 });
 

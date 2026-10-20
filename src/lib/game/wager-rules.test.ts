@@ -93,8 +93,8 @@ describe("wager above effective max rejected", () => {
   });
 });
 
-describe("duplicate/second wager rejected", () => {
-  it("combined final response is locked once answer+wager exist", () => {
+describe("final response remains editable while FINAL_QUESTION is open", () => {
+  it("keeps submitted teams in the answered phase until the host closes", () => {
     assert.equal(
       resolveTeamPlayPhase({
         status: "FINAL_QUESTION",
@@ -103,6 +103,7 @@ describe("duplicate/second wager rejected", () => {
       }),
       "final_question_answered",
     );
+    assert.equal(canSubmitFinalResponse("FINAL_QUESTION"), true);
     assert.equal(canSubmitFinalResponse("FINAL_REVIEW"), false);
   });
 });
