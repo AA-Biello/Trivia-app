@@ -421,12 +421,24 @@ export function HostConsole({
                 ) : null}
 
                 {status === "QUESTION_CLOSED" ? (
-                  <form action={advanceAction}>
+                  <form action={advanceAction} className="flex flex-col gap-3">
                     <input type="hidden" name="gameId" value={gameId} />
+                    {afterClose === "round_break" ? (
+                      <label className="flex flex-col gap-1 text-sm font-medium text-zinc-800">
+                        Waiting message for teams
+                        <textarea
+                          name="waitingMessage"
+                          rows={3}
+                          maxLength={280}
+                          placeholder="Optional — shown while you grade (e.g. Grab a drink, music round next…)"
+                          className="rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm font-normal"
+                        />
+                      </label>
+                    ) : null}
                     <button
                       type="submit"
                       disabled={advancePending}
-                      className="rounded-lg bg-amber-800 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+                      className="w-fit rounded-lg bg-amber-800 px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
                     >
                       {advancePending
                         ? "Working…"

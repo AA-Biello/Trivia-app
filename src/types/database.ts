@@ -28,6 +28,7 @@ export type Database = {
           status: GameStatus;
           current_round_id: string | null;
           current_question_id: string | null;
+          waiting_message: string | null;
           created_at: IsoTimestamptz;
           updated_at: IsoTimestamptz;
         };
@@ -38,6 +39,7 @@ export type Database = {
           status?: GameStatus;
           current_round_id?: string | null;
           current_question_id?: string | null;
+          waiting_message?: string | null;
           created_at?: IsoTimestamptz;
           updated_at?: IsoTimestamptz;
         };
@@ -48,6 +50,7 @@ export type Database = {
           status?: GameStatus;
           current_round_id?: string | null;
           current_question_id?: string | null;
+          waiting_message?: string | null;
           created_at?: IsoTimestamptz;
           updated_at?: IsoTimestamptz;
         };

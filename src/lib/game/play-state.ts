@@ -4,6 +4,7 @@ import { loadPublishedFinalResults } from "@/lib/game/final-state";
 import { buildPublicRevealForGame } from "@/lib/game/grade-state";
 import type { PublicGameStatePayload } from "@/lib/game/play-channel";
 import { loadPublishedScoreboard } from "@/lib/game/scoreboard-state";
+import { publicWaitingMessageForStatus } from "@/lib/game/waiting-message";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { GameStatus } from "@/types/game";
 
@@ -50,6 +51,7 @@ function emptyPublicState(status: GameStatus = "LOBBY"): PublicGameStatePayload 
     questionCount: null,
     prompt: null,
     maxWager: null,
+    waitingMessage: null,
     reveal: null,
     scoreboard: null,
     finalResults: null,
@@ -63,7 +65,7 @@ export async function loadPublicGameState(
 
   const { data: game } = await admin
     .from("games")
-    .select("status, current_round_id, current_question_id")
+    .select("status, current_round_id, current_question_id, waiting_message")
     .eq("id", gameId)
     .single();
 
@@ -72,6 +74,10 @@ export async function loadPublicGameState(
   }
 
   const status = game.status as GameStatus;
+  const waitingMessage = publicWaitingMessageForStatus(
+    status,
+    game.waiting_message,
+  );
 
   let roundTitle: string | null = null;
   let questionCount: number | null = null;
@@ -110,6 +116,7 @@ export async function loadPublicGameState(
       roundTitle,
       questionCount,
       maxWager: status === "FINAL_REVIEW" ? maxWager : null,
+      waitingMessage,
     };
   }
 
@@ -158,6 +165,7 @@ export async function loadPublicGameState(
       status === "REVEAL" ? (reveal?.questionCount ?? questionCount) : questionCount,
     prompt: status === "REVEAL" ? (reveal?.prompt ?? null) : prompt,
     maxWager: status === "FINAL_QUESTION" ? maxWager : null,
+    waitingMessage: null,
     reveal,
     scoreboard,
     finalResults,

@@ -56,6 +56,8 @@ export type PublicGameStatePayload = {
   prompt: string | null;
   /** Present during wager phases; never includes other teams' amounts. */
   maxWager: number | null;
+  /** Host message during ROUND_BREAK / ROUND_REVIEW; null uses app default. */
+  waitingMessage: string | null;
   reveal: PublicRevealView | null;
   scoreboard: PublicScoreboardRow[] | null;
   /** Only after host publishes FINAL_RESULTS. */

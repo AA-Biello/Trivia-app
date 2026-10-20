@@ -228,12 +228,26 @@ export function TeamPlayClient({ gameId, initial }: Props) {
 
       {phase === "round_break" || phase === "round_review" ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-6 py-10 text-center">
-          <p className="text-xl font-medium text-amber-950">
-            The host is reviewing your answers
-          </p>
-          <p className="mt-2 text-amber-900/80">
-            Hang tight — results will appear when the host starts the reveal.
-          </p>
+          {publicState.waitingMessage ? (
+            <>
+              <p className="whitespace-pre-wrap text-xl font-medium text-amber-950">
+                {publicState.waitingMessage}
+              </p>
+              <p className="mt-2 text-amber-900/80">
+                Results will appear when the host starts the reveal.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="text-xl font-medium text-amber-950">
+                The host is reviewing your answers
+              </p>
+              <p className="mt-2 text-amber-900/80">
+                Hang tight — results will appear when the host starts the
+                reveal.
+              </p>
+            </>
+          )}
         </div>
       ) : null}
 

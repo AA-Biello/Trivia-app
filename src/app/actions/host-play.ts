@@ -19,6 +19,7 @@ import {
   findNextPlayableRound,
 } from "@/lib/game/round-rules";
 import { clearRevealStateForGame } from "@/lib/game/round-state";
+import { normalizeWaitingMessage } from "@/lib/game/waiting-message";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { GameStatus } from "@/types/game";
 
@@ -410,9 +411,12 @@ export async function advanceOrEndRoundAction(
   const step = nextStepAfterClose(Boolean(nextQuestion));
 
   if (step === "round_break") {
+    const waitingMessage = normalizeWaitingMessage(
+      formData.get("waitingMessage"),
+    );
     const { error } = await admin
       .from("games")
-      .update({ status: "ROUND_BREAK" })
+      .update({ status: "ROUND_BREAK", waiting_message: waitingMessage })
       .eq("id", gameId);
     if (error) {
       console.error("endRound", error);
