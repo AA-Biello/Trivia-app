@@ -11,6 +11,10 @@ import {
 } from "@/lib/game/play-channel";
 import { createAdminClient } from "@/lib/supabase/admin";
 
+/**
+ * Server-side broadcast via REST. Does not require a subscribed WebSocket
+ * (important on Vercel / short-lived server actions).
+ */
 async function broadcast(
   gameId: string,
   event: string,
@@ -19,11 +23,12 @@ async function broadcast(
   const admin = createAdminClient();
   const channel = admin.channel(playChannelName(gameId));
   try {
-    await channel.send({
-      type: "broadcast",
-      event,
-      payload,
-    });
+    const result = await channel.httpSend(event, payload);
+    if (!result.success) {
+      throw new Error(
+        `broadcast ${event} failed (${result.status}): ${result.error}`,
+      );
+    }
   } finally {
     await admin.removeChannel(channel);
   }

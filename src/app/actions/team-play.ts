@@ -24,6 +24,7 @@ export type SubmitAnswerState = {
   error?: string;
   ok?: boolean;
   answerText?: string;
+  questionId?: string;
 } | null;
 
 export type SubmitFinalResponseState = {
@@ -31,6 +32,7 @@ export type SubmitFinalResponseState = {
   ok?: boolean;
   answerText?: string;
   amount?: number;
+  questionId?: string;
 } | null;
 
 export async function submitAnswerAction(
@@ -120,7 +122,7 @@ export async function submitAnswerAction(
 
   revalidatePath(`/game/${gameId}`);
   revalidatePath(`/host/${gameId}`);
-  return { ok: true, answerText };
+  return { ok: true, answerText, questionId };
 }
 
 /**
@@ -290,5 +292,10 @@ export async function submitFinalResponseAction(
 
   revalidatePath(`/game/${gameId}`);
   revalidatePath(`/host/${gameId}`);
-  return { ok: true, answerText, amount: validation.amount };
+  return {
+    ok: true,
+    answerText,
+    amount: validation.amount,
+    questionId,
+  };
 }

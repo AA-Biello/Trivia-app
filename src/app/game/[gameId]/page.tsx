@@ -39,22 +39,7 @@ export default async function TeamGamePage({ params }: PageProps) {
     session.teamName,
   );
 
-  const reveal = snapshot.publicState.reveal;
-  const clientKey = [
-    snapshot.publicState.status,
-    snapshot.publicState.questionId ?? "none",
-    reveal?.correctAnswer != null ? "ca1" : "ca0",
-    reveal?.teamAnswers != null ? "ta1" : "ta0",
-    snapshot.publicState.scoreboard?.map((r) => r.totalPoints).join(",") ??
-      "noscores",
-    snapshot.publicState.finalResults?.map((r) => r.finalScore).join(",") ??
-      "nofinal",
-    snapshot.myAnswer?.submittedAt ?? "noanswer",
-    snapshot.myWager?.amount ?? "nowager",
-    snapshot.myScore,
-  ].join(":");
-
   return (
-    <TeamPlayClient key={clientKey} gameId={session.gameId} initial={snapshot} />
+    <TeamPlayClient gameId={session.gameId} initial={snapshot} />
   );
 }

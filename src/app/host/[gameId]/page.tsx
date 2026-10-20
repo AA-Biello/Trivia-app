@@ -126,18 +126,8 @@ export default async function HostGamePage({ params }: PageProps) {
     createdAt: team.created_at,
   }));
 
-  const consoleKey = [
-    play.status,
-    play.round?.id ?? "noround",
-    play.currentQuestion?.id ?? "noq",
-    rounds.map((r) => `${r.id}:${r.status}`).join("|"),
-    finalSnapshot?.lockedTeamIds.join(",") ?? "",
-    play.submittedTeamIds.join(","),
-  ].join(":");
-
   return (
     <HostConsole
-      key={consoleKey}
       gameId={session.gameId}
       title={session.title}
       joinCode={session.joinCode}

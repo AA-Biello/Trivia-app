@@ -17,6 +17,9 @@ export const metadata: Metadata = {
   description: "Host and join live pub-style trivia lobbies.",
 };
 
+/** Colocate with Supabase us-west-1 for lower action / refresh latency. */
+export const preferredRegion = "sfo1";
+
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html

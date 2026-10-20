@@ -1,7 +1,6 @@
 "use client";
 
 import { useActionState, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 
 import {
   submitAnswerAction,
@@ -30,13 +29,36 @@ type Props = {
 const initialSubmit: SubmitAnswerState = null;
 const initialFinal: SubmitFinalResponseState = null;
 
+function snapshotSignature(snapshot: TeamPlaySnapshot): string {
+  const state = snapshot.publicState;
+  return [
+    state.status,
+    state.questionId ?? "",
+    state.prompt ?? "",
+    state.reveal?.correctAnswer ?? "",
+    state.reveal?.teamAnswers?.length ?? 0,
+    state.scoreboard?.length ?? 0,
+    state.finalResults?.length ?? 0,
+    snapshot.myAnswer?.submittedAt ?? "",
+    snapshot.myWager?.amount ?? "",
+    snapshot.myScore,
+  ].join("|");
+}
+
 export function TeamPlayClient({ gameId, initial }: Props) {
-  const router = useRouter();
   const [publicState, setPublicState] = useState(initial.publicState);
   const [myAnswer, setMyAnswer] = useState(initial.myAnswer);
-  const myWager = initial.myWager;
-  const myScore = initial.myScore;
+  const [myWager, setMyWager] = useState(initial.myWager);
+  const [myScore, setMyScore] = useState(initial.myScore);
+  // Scope locks to a question so a prior submitState can't hide the next prompt.
+  const [answerQuestionId, setAnswerQuestionId] = useState<string | null>(
+    initial.myAnswer ? initial.publicState.questionId : null,
+  );
+  const [wagerQuestionId, setWagerQuestionId] = useState<string | null>(
+    initial.myWager ? initial.publicState.questionId : null,
+  );
   const questionIdRef = useRef(initial.publicState.questionId);
+  const syncSignatureRef = useRef(snapshotSignature(initial));
   const [submitState, submitAction, pending] = useActionState(
     submitAnswerAction,
     initialSubmit,
@@ -47,44 +69,136 @@ export function TeamPlayClient({ gameId, initial }: Props) {
   );
 
   const effectiveAnswer =
-    myAnswer ??
-    (submitState?.ok && submitState.answerText
-      ? { text: submitState.answerText, submittedAt: "" }
-      : null) ??
-    (finalState?.ok && finalState.answerText
-      ? { text: finalState.answerText, submittedAt: "" }
-      : null);
-
+    myAnswer && answerQuestionId === publicState.questionId ? myAnswer : null;
   const effectiveWager =
-    myWager ??
-    (finalState?.ok && finalState.amount != null
-      ? { amount: finalState.amount, lockedAt: "" }
-      : null);
+    myWager && wagerQuestionId === publicState.questionId ? myWager : null;
 
   useEffect(() => {
     questionIdRef.current = publicState.questionId;
   }, [publicState.questionId]);
 
+  function applySnapshot(snapshot: TeamPlaySnapshot) {
+    const signature = snapshotSignature(snapshot);
+    if (signature === syncSignatureRef.current) {
+      return;
+    }
+    syncSignatureRef.current = signature;
+
+    const next = snapshot.publicState;
+    setPublicState(next);
+    questionIdRef.current = next.questionId;
+    setMyScore(snapshot.myScore);
+    setMyAnswer(snapshot.myAnswer);
+    setMyWager(snapshot.myWager);
+    setAnswerQuestionId(
+      snapshot.myAnswer ? next.questionId : null,
+    );
+    setWagerQuestionId(snapshot.myWager ? next.questionId : null);
+  }
+
+  function applyBroadcastState(state: PublicGameStatePayload) {
+    const questionChanged = state.questionId !== questionIdRef.current;
+    setPublicState(state);
+    questionIdRef.current = state.questionId;
+    if (questionChanged) {
+      setMyAnswer(null);
+      setMyWager(null);
+      setAnswerQuestionId(null);
+      setWagerQuestionId(null);
+    }
+    const scoreRow = state.scoreboard?.find(
+      (row) => row.teamName === initial.teamName,
+    );
+    if (scoreRow) {
+      setMyScore(scoreRow.totalPoints);
+    }
+    // Force the next poll/snapshot apply to accept fresher server data.
+    syncSignatureRef.current = "";
+  }
+
+  // Capture optimistic lock-in for the submitted question only (not whatever is open now).
+  useEffect(() => {
+    if (!submitState?.ok || !submitState.answerText || !submitState.questionId) {
+      return;
+    }
+    setMyAnswer({ text: submitState.answerText, submittedAt: "" });
+    setAnswerQuestionId(submitState.questionId);
+  }, [submitState]);
+
+  useEffect(() => {
+    if (!finalState?.ok || !finalState.questionId) return;
+    if (finalState.answerText) {
+      setMyAnswer({ text: finalState.answerText, submittedAt: "" });
+      setAnswerQuestionId(finalState.questionId);
+    }
+    if (finalState.amount != null) {
+      setMyWager({ amount: finalState.amount, lockedAt: "" });
+      setWagerQuestionId(finalState.questionId);
+    }
+  }, [finalState]);
+
+  // Apply server props only when the meaningful snapshot fingerprint changes.
+  const initialSyncKey = snapshotSignature(initial);
+  useEffect(() => {
+    applySnapshot(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- sync on fingerprint only
+  }, [initialSyncKey]);
+
+  // Realtime push (fast path) + HTTP poll fallback for mobile WS drops.
   useEffect(() => {
     const supabase = createClient();
+    let cancelled = false;
+
+    async function pullSnapshot() {
+      try {
+        const response = await fetch(`/api/game/${gameId}/play`, {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        if (!response.ok || cancelled) return;
+        const snapshot = (await response.json()) as TeamPlaySnapshot;
+        if (!snapshot?.publicState?.status || cancelled) return;
+        applySnapshot(snapshot);
+      } catch {
+        // Ignore transient network errors; next poll retries.
+      }
+    }
+
     const channel = supabase
       .channel(playChannelName(gameId))
       .on("broadcast", { event: GAME_STATE_EVENT }, ({ payload }) => {
         const state = payload as PublicGameStatePayload;
         if (!state?.status) return;
-        const questionChanged = state.questionId !== questionIdRef.current;
-        setPublicState(state);
-        if (questionChanged) {
-          setMyAnswer(null);
-        }
-        router.refresh();
+        applyBroadcastState(state);
+        // Immediately reconcile answer/wager fields from the server.
+        void pullSnapshot();
       })
-      .subscribe();
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          void pullSnapshot();
+        }
+      });
+
+    const pollId = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void pullSnapshot();
+      }
+    }, 2000);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void pullSnapshot();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
+      cancelled = true;
+      window.clearInterval(pollId);
+      document.removeEventListener("visibilitychange", onVisible);
       void supabase.removeChannel(channel);
     };
-  }, [gameId, router]);
+  }, [gameId, initial.teamName]);
 
   const phase = resolveTeamPlayPhase({
     status: publicState.status,

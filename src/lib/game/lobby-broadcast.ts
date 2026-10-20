@@ -16,11 +16,12 @@ export async function broadcastTeamJoined(
   const channel = admin.channel(lobbyChannelName(gameId));
 
   try {
-    await channel.send({
-      type: "broadcast",
-      event: LOBBY_TEAM_JOINED_EVENT,
-      payload: team,
-    });
+    const result = await channel.httpSend(LOBBY_TEAM_JOINED_EVENT, team);
+    if (!result.success) {
+      throw new Error(
+        `lobby broadcast failed (${result.status}): ${result.error}`,
+      );
+    }
   } finally {
     await admin.removeChannel(channel);
   }

@@ -90,10 +90,34 @@ export function HostConsole({
     () => new Set(finalSnapshot?.lockedTeamIds ?? []),
   );
   const currentQuestionIdRef = useRef(initialPlay.currentQuestion?.id);
+  const statusRef = useRef<GameStatus>(initialPlay.status);
 
   useEffect(() => {
     currentQuestionIdRef.current = play.currentQuestion?.id;
   }, [play.currentQuestion?.id]);
+
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  // Apply server props after host actions call router.refresh() — without remounting.
+  const playSyncKey = [
+    initialPlay.status,
+    initialPlay.round?.id ?? "",
+    initialPlay.currentQuestion?.id ?? "",
+    initialPlay.submittedTeamIds.join(","),
+    finalSnapshot?.lockedTeamIds.join(",") ?? "",
+  ].join(":");
+
+  useEffect(() => {
+    setStatus(initialPlay.status);
+    setPlay(initialPlay);
+    setSubmittedIds(new Set(initialPlay.submittedTeamIds));
+    setSubmittedNames(initialPlay.submittedTeamNames);
+    setLockedFinalIds(new Set(finalSnapshot?.lockedTeamIds ?? []));
+    currentQuestionIdRef.current = initialPlay.currentQuestion?.id;
+    statusRef.current = initialPlay.status;
+  }, [playSyncKey, initialPlay, finalSnapshot]);
 
   useEffect(() => {
     const supabase = createClient();
@@ -123,6 +147,7 @@ export function HostConsole({
         const questionChanged =
           state.questionId !== currentQuestionIdRef.current;
         setStatus(state.status);
+        statusRef.current = state.status;
         if (questionChanged) {
           setSubmittedIds(new Set());
           setSubmittedNames([]);
@@ -139,7 +164,7 @@ export function HostConsole({
               }
             : current.currentQuestion,
         }));
-        router.refresh();
+        // Host-only panels (grading/reveal/final) still load via action refresh.
       })
       .on("broadcast", { event: ANSWER_PROGRESS_EVENT }, ({ payload }) => {
         const progress = payload as AnswerProgressPayload;
@@ -161,7 +186,7 @@ export function HostConsole({
             ? current
             : [...current, progress.teamName],
         );
-        if (status === "FINAL_QUESTION" || play.status === "FINAL_QUESTION") {
+        if (statusRef.current === "FINAL_QUESTION") {
           setLockedFinalIds((current) => {
             if (current.has(progress.teamId)) return current;
             const next = new Set(current);
@@ -186,7 +211,7 @@ export function HostConsole({
       void supabase.removeChannel(lobby);
       void supabase.removeChannel(playChannel);
     };
-  }, [gameId, router, status, play.status]);
+  }, [gameId]);
 
   const [openState, openAction, openPending] = useActionState(
     openQuestionAction,
